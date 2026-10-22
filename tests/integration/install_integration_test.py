@@ -1560,6 +1560,22 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertEqual(self.snapshot(), before)
 
+    def test_opencode_rerun_preserves_user_added_schema(self):
+        path = Path(self.home, ".config/opencode/opencode.jsonc")
+        path.parent.mkdir(parents=True)
+        path.write_text('{"theme":"mine"}')
+        self.assert_ok(self.opencode_only())
+        data = json.loads(path.read_text())
+        self.assertNotIn("$schema", data)
+        data["$schema"] = "https://opencode.ai/config.json"
+        path.write_text(json.dumps(data))
+        self.assert_ok(self.opencode_rerun())
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(
+            json.loads(path.read_text()),
+            {"theme": "mine", "$schema": "https://opencode.ai/config.json"},
+        )
+
     def test_opencode_existing_global_provider_is_not_owned(self):
         path = Path(self.home, ".config/opencode/opencode.jsonc")
         path.parent.mkdir(parents=True)

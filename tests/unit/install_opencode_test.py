@@ -163,8 +163,8 @@ class OpenCodeConfigTest(Case):
         self.edit("remove-plugin", self.path, self.before, self.installed)
         self.assertEqual(self.path.read_text(), original)
         self.before.write_text("")
-        self.installed.write_text('{"plugin":["installed"]}')
-        self.path.write_text(self.installed.read_text())
+        self.installed.write_text('{"plugin":["installed"],"_agent_pm_created":true}')
+        self.path.write_text('{"plugin":["installed"]}')
         self.edit("remove-plugin", self.path, self.before, self.installed)
         self.assertFalse(self.path.exists())
 
@@ -204,6 +204,57 @@ class OpenCodeConfigTest(Case):
         self.edit("record-plugin", self.path, self.before, self.installed, "agent-pm@new")
         self.edit("remove-plugin", self.path, self.before, self.installed)
         self.assertEqual(json.loads(self.path.read_text()), {"plugin": ["earlier-user", "user"]})
+
+    def test_plugin_rerecord_preserves_later_user_schema(self):
+        self.before.write_text('{"theme":"mine"}')
+        self.path.write_text('{"theme":"mine","plugin":["agent-pm@old"]}')
+        self.edit("record-plugin", self.path, self.before, self.installed, "agent-pm@old")
+        current = json.loads(self.path.read_text())
+        current["$schema"] = "https://opencode.ai/config.json"
+        self.path.write_text(json.dumps(current))
+        self.edit("record-plugin", self.path, self.before, self.installed, "agent-pm@old")
+        self.edit("remove-plugin", self.path, self.before, self.installed)
+        self.assertEqual(
+            json.loads(self.path.read_text()),
+            {"theme": "mine", "$schema": "https://opencode.ai/config.json"},
+        )
+
+    def test_plugin_update_preserves_schema_present_before_operation(self):
+        self.before.write_text('{"theme":"mine"}')
+        self.path.write_text('{"theme":"mine","plugin":["agent-pm@old"]}')
+        self.edit("record-plugin", self.path, self.before, self.installed, "agent-pm@old")
+        current = json.loads(self.path.read_text())
+        current["$schema"] = "https://opencode.ai/config.json"
+        self.path.write_text(json.dumps(current))
+        self.edit("prepare-plugin", self.path, self.installed)
+        current["plugin"] = ["agent-pm@new"]
+        self.path.write_text(json.dumps(current))
+        self.edit("record-plugin", self.path, self.before, self.installed, "agent-pm@new")
+        self.edit("remove-plugin", self.path, self.before, self.installed)
+        self.assertEqual(
+            json.loads(self.path.read_text()),
+            {"theme": "mine", "$schema": "https://opencode.ai/config.json"},
+        )
+
+    def test_plugin_cleanup_distinguishes_absent_and_existing_empty_file(self):
+        for existed in (False, True):
+            with self.subTest(existed=existed):
+                self.path.unlink(missing_ok=True)
+                self.installed.unlink(missing_ok=True)
+                self.before.write_text("")
+                if existed:
+                    self.path.write_text("")
+                self.edit("prepare-plugin", self.path, self.installed)
+                self.path.write_text(
+                    '{"$schema":"https://opencode.ai/config.json","plugin":["agent-pm@new"]}'
+                )
+                self.edit("record-plugin", self.path, self.before, self.installed, "agent-pm@new")
+                self.edit("prepare-plugin", self.path, self.installed)
+                self.edit("record-plugin", self.path, self.before, self.installed, "agent-pm@new")
+                self.edit("remove-plugin", self.path, self.before, self.installed)
+                self.assertEqual(self.path.exists(), existed)
+                if existed:
+                    self.assertEqual(self.path.read_text(), "")
 
     def test_plugin_cleanup_restores_original_replaced_spec(self):
         original = '{"plugin":["agent-pm@original"]}'

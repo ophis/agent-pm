@@ -500,12 +500,20 @@ def run():
         write(state / ("opencode-provider-" + name + ".json"), json.dumps(record))
         write(plan, new)
         print(path)
+    elif action == "prepare-plugin":
+        installed, = args
+        current, _ = parse(load(path))
+        write(Path(installed + ".pending"), json.dumps({"schema": "$schema" in current, "created": not path.exists()}))
     elif action == "record-plugin":
         before, installed, spec = args
         installed = Path(installed)
         current, _ = parse(load(path))
         baseline, _ = parse(Path(before).read_text(encoding="utf-8"))
+        pending = Path(str(installed) + ".pending")
+        evidence, _ = parse(load(pending))
         tracked, _ = parse(load(installed)) if installed.exists() else (baseline.copy(), "")
+        if not installed.exists():
+            tracked["_agent_pm_created"] = evidence.get("created") is True
         plugins = current.get("plugin", [])
         previous = tracked.get("plugin", [])
         if not isinstance(plugins, list) or not isinstance(previous, list):
@@ -513,9 +521,11 @@ def run():
         if spec in plugins:
             prefix = spec.split("@", 1)[0] + "@"
             tracked["plugin"] = [p for p in previous if not isinstance(p, str) or not p.startswith(prefix)] + [spec]
-        if "$schema" not in baseline and current.get("$schema") == "https://opencode.ai/config.json":
+        if ("$schema" not in baseline and evidence.get("schema") is False
+                and current.get("$schema") == "https://opencode.ai/config.json"):
             tracked["$schema"] = current["$schema"]
         write(installed, json.dumps(tracked))
+        pending.unlink(missing_ok=True)
     elif action == "remove-provider":
         state, name = args
         if not path.exists():
@@ -572,10 +582,10 @@ def run():
             for note in notes(original):
                 if note in extra:
                     extra.remove(note)
-            if not original and not extra:
+            if not original and not extra and added.get("_agent_pm_created") is True:
                 path.unlink()
                 return
-            text = original or "{}\n"
+            text = original
             if extra:
                 text = text.rstrip() + "\n" + "\n".join(extra) + "\n"
         else:
