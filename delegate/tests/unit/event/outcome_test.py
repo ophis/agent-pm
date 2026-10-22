@@ -395,10 +395,13 @@ class AutopilotField(Reading):
         good = {"status": "converged", "head": HEAD}
         for bad, msg in (
             ("converged", "autopilot must be an object"),
-            ({"status": "converged"}, "lacks 'head'"),
-            ({"head": HEAD}, "lacks 'status'"),
-            ({**good, "pr": ""}, "unknown field 'pr'"),
-            ({**good, "status": "done"}, "is not one of converged"),
+            ({"status": "converged"}, "autopilot lacks 'autopilot.head'"),
+            ({"head": HEAD}, "autopilot lacks 'autopilot.status'"),
+            ({**good, "pr": ""}, "unknown field 'autopilot.pr'"),
+            (
+                {**good, "status": "done"},
+                "autopilot.status 'done' is not one of converged, capped-without-pass, stopped",
+            ),
             ({**good, "head": HEAD[:-1]}, "head must match"),
             ({**good, "head": HEAD + "0"}, "head must match"),
             ({**good, "head": HEAD.upper()}, "head must match"),
@@ -407,6 +410,71 @@ class AutopilotField(Reading):
         ):
             with self.subTest(bad=bad):
                 self.refused({**DONE, "autopilot": bad}, msg)
+
+
+class FieldPaths(Base):
+    def test_every_schema_error_keeps_its_path(self):
+        for value, rule, message in (
+            (7, {"type": "object"}, "{path} must be an object"),
+            ({}, {"type": "object", "required": ["child"]}, "{path} lacks '{path}.child'"),
+            (
+                {"extra": 1},
+                {"type": "object", "additionalProperties": False},
+                "unknown field '{path}.extra'",
+            ),
+            (7, {"type": "string"}, "{path} must be text"),
+            ("", {"type": "string", "minLength": 1}, "{path} is shorter than 1 characters"),
+            ("xx", {"type": "string", "maxLength": 1}, "{path} is longer than 1 characters"),
+            ("x", {"type": "string", "pattern": "[a-z]{2}"}, "{path} must match [a-z]{{2}}"),
+            ("x", {"type": "string", "enum": ["y", "z"]}, "{path} 'x' is not one of y, z"),
+            (7, {"type": "array"}, "{path} must be a list"),
+            ([1, 2], {"type": "array", "maxItems": 1}, "{path} has more than 1 items"),
+            (
+                [7],
+                {"type": "array", "items": {"type": "string"}},
+                "{path}[0] must be text",
+            ),
+        ):
+            for path, wrapped, properties in (
+                ("detail", value, rule),
+                (
+                    "detail.inner",
+                    {"inner": value},
+                    {"type": "object", "properties": {"inner": rule}},
+                ),
+                (
+                    "detail[0].inner",
+                    [{"inner": value}],
+                    {
+                        "type": "array",
+                        "items": {"type": "object", "properties": {"inner": rule}},
+                    },
+                ),
+            ):
+                with self.subTest(path=path, rule=rule):
+                    s = {"type": "object", "properties": {"detail": properties}}
+                    with self.assertRaises(InvalidOutcome) as cm:
+                        outcome._conform({"detail": wrapped}, s, "")
+                    self.assertEqual(str(cm.exception), message.format(path=path))
+
+    def test_root_errors_keep_their_original_text(self):
+        for data, s, message in (
+            (DONE, {"type": "object", "required": ["detail"]}, "outcome lacks 'detail'"),
+            (
+                {**DONE, "extra": 1},
+                schema(),
+                "unknown field 'extra'",
+            ),
+            (
+                {**DONE, "status": "converged"},
+                schema(),
+                "status 'converged' is not one of done, needs_input, failed",
+            ),
+        ):
+            with self.subTest(message=message):
+                with self.assertRaises(InvalidOutcome) as cm:
+                    outcome._conform(data, s, "")
+                self.assertEqual(str(cm.exception), message)
 
 
 class Paths(Case):
