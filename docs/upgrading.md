@@ -23,6 +23,10 @@ then imports it into the broker without a second key entry. An earlier broker-on
 existing local API entries are reused, including after a broker reinstall. Both entries follow the install ledger's
 cleanup ownership ([Credentials](credentials.md#opencode-provider-api-keys)).
 
+With OpenCode selected, accept the installer's shell profile addition for `~/.agent-pm/opencode/bin`, then open
+a new terminal to run `opencode` directly. Rerunning an earlier install offers the same addition; it keeps the
+selected provider's configuration and credentials.
+
 ## Upgrading steps
 
 Nothing migrates automatically. Do each row that applies, once, by hand or through an agent.
