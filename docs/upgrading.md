@@ -18,6 +18,11 @@ commands run the new copy. Update the other plugins (Claude Code: `claude plugin
 the plugin's broker sources changed it reinstalls the broker and asks its logins again ([Log in](docker-host.md#log-in)).
 Do the [Upgrading steps](#upgrading-steps) that apply as before: it does not edit config keys a release renames.
 
+For OpenCode with `--docker`, rerunning the installer also ensures the local `auth.json` entry for a commander,
+then imports it into the broker without a second key entry. An earlier broker-only install needs one local login;
+existing local API entries are reused, including after a broker reinstall. Both entries follow the install ledger's
+cleanup ownership ([Credentials](credentials.md#opencode-provider-api-keys)).
+
 ## Upgrading steps
 
 Nothing migrates automatically. Do each row that applies, once, by hand or through an agent.

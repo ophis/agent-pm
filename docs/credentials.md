@@ -19,8 +19,8 @@ with the broker; a provider API key is the same long-lived key in every containe
 | `tmux` | Codex | the user, beforehand: `codex login` ([Codex auth]) | `~/.codex/auth.json`, or the OS credential store per `cli_auth_credentials_store` ([Codex auth]) | no container | — |
 | Docker | Claude Code | the user, once per broker install and [account](docker-host.md#claude-accounts): `claude setup-token` in its subscription, pasted into `<B> login claude [<name>]` ([Log in](docker-host.md#log-in)) | `agent-pm-claude` / account name | the selected account's token alone, `/run/agent-pm/secrets/claude`, 0400 on tmpfs, given to the client only as `CLAUDE_CODE_OAUTH_TOKEN` | deleted with the container (close, restart, resume start a new one); never revoked |
 | Docker | Codex | an admin installs the pinned Codex (`sudo <B> install-codex <version>`); the user, once per broker install: `<B> login codex` in a browser ([Codex](docker-host.md#codex)) | `agent-pm-codex` / `auth` | `/run/agent-pm/secrets/codex/auth.json`, 0400 on tmpfs, with no refresh token; the broker publishes each renewal | deleted with the container; never revoked |
-| `tmux` | OpenCode | no one for the host's Ollama on `127.0.0.1` ([Docker host › OpenCode](docker-host.md#opencode)); a configured provider's API key: the user, beforehand: `opencode auth login` ([OpenCode sessions](sessions.md#opencode-sessions)) | OpenCode's `auth.json`; agent-pm reads the selected API entry only for provider availability probes | no container | — |
-| Docker | OpenCode | no one for the host's Ollama (through `host.docker.internal`); each configured provider's API key: the user, once per broker install and provider: `<B> login opencode <name>` ([Log in](docker-host.md#log-in)) | `agent-pm-opencode` / `<name>` | the GitHub tokens and each configured provider's key, `/run/agent-pm/secrets/opencode/<name>.key`, 0400 on tmpfs, read by OpenCode through `{file:…}` in its inline config, never env or argv | deleted with the container; never revoked |
+| `tmux` | OpenCode | no one for the host's Ollama on `127.0.0.1` ([Docker host › OpenCode](docker-host.md#opencode)); a configured provider's API key: the user, beforehand: `opencode auth login` ([OpenCode sessions](sessions.md#opencode-sessions)) | OpenCode's `auth.json`; agent-pm reads the selected API entry for availability probes and explicit broker import | no container | — |
+| Docker | OpenCode | no one for the host's Ollama (through `host.docker.internal`); each configured provider's API key: `scripts/install.sh --docker` imports the local entry, or the user runs `<B> login opencode <name>` per broker install and provider ([Log in](docker-host.md#log-in)) | `agent-pm-opencode` / `<name>` | the GitHub tokens and each configured provider's key, `/run/agent-pm/secrets/opencode/<name>.key`, 0400 on tmpfs, read by OpenCode through `{file:…}` in its inline config, never env or argv | deleted with the container; never revoked |
 
 GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot` once per broker install
 ([Log in](docker-host.md#log-in)). The local Host uses the host `gh` login below.
@@ -128,10 +128,22 @@ One per `[session.clients.opencode.providers.<name>]` table, such as a LAN Strat
 |---|---|---|
 | Purpose | OpenCode's requests to the provider | the same, from a container |
 | Minimum permission | whatever the provider's key grants; issue one for agent-pm alone | the same |
-| Stored at | OpenCode's `auth.json` (`opencode auth login`); agent-pm reads the selected API entry only for provider availability probes | `agent-pm-opencode` / `<name>`; per container `/run/agent-pm/secrets/opencode/<name>.key` |
+| Stored at | OpenCode's `auth.json` (`opencode auth login`); agent-pm reads the selected API entry for provider availability probes and explicit broker import | `agent-pm-opencode` / `<name>`; per container `/run/agent-pm/secrets/opencode/<name>.key`; Docker installs also keep the local entry for commanders |
 | Readers | OpenCode and any process running as the user | item: the broker only, once `login opencode <name>` has made it trust only the broker; container copy: **three-way readers**; on the network: anyone between the container and an `http://` `base_url` ([Risks](#risks)) |
 | Lifetime | until the provider revokes it | the same; a container's copy until the container goes |
 | Revoke | revoke it at the provider; `opencode auth logout` removes it locally | revoke it at the provider, then `<B> login opencode <name>` with a new one, which replaces the item; running containers keep the old copy until closed |
+
+`scripts/install.sh --docker` with OpenCode selected stores the key locally first, then imports that provider's
+API entry into the broker ([Log in](docker-host.md#log-in)). Paste once at `opencode auth login`, or supply one
+line with `--opencode-key-stdin`. The local store is `${XDG_DATA_HOME:-~/.local/share}/opencode/auth.json`.
+Reruns skip an existing usable local API entry and a broker item whose recorded binary fingerprint still matches.
+A missing broker item or changed broker binary imports the local entry without asking for the key again. An older
+broker-only install needs one local login to fill the missing entry; the broker key is never exported. Existing
+entries are not compared or synchronized when both are skipped.
+
+The install ledger records each entry it adds: `opencode-auth` for the local provider and `keychain` for
+`agent-pm-opencode` / `<name>`. `scripts/install-cleanup.sh` removes both recorded entries, preserving preexisting
+credentials and other providers. This deletes the stored copies; it does not revoke the key at the provider.
 
 ## Keychain items
 

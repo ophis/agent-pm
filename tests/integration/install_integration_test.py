@@ -1196,9 +1196,6 @@ class InstallTest(Case):
         result = self.run_install("--clients", "claude", "--opencode-model", "m", tty=False)
         self.assertEqual(result.code, 2)
         self.assertIn("opencode is not among the clients", result.stderr)
-        result = self.run_install("--docker", "--opencode-key-stdin", stdin=KEY + "\n", tty=False)
-        self.assertEqual(result.code, 2)
-        self.assertIn("the broker reads a provider key only from a terminal", result.stderr)
         self.assertEqual(self.calls(), [])
         result = self.run_install(
             "--no-docker",
@@ -1399,23 +1396,23 @@ class InstallTest(Case):
         self.assertIn(f"    {package}\n", result.stderr)
 
     def test_opencode_new_commit_reinstalls_broker(self):
-        key_q = r"OpenCode provider lan API key \(hidden\):"
         result = self.fresh(
             clients="opencode",
             docker="y",
             opencode=PROVIDER_ANSWERS,
-            logins=[(PEM_Q, ""), (key_q, KEY)],
+            logins=[(PEM_Q, ""), (OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)],
         )
         self.assert_ok(result)
         self.assertIn("broker-install ", self.calls())
         (self.fakes / "commit").write_text(NEW)
         self.versions.write_text('package codex\n\nconst MinVersion = "0.170.0"\n')
-        result = self.again(answers=[(key_q, KEY)])
+        result = self.again()
         self.assert_ok(result)
         calls = self.calls()
         self.assertIn(f"opencode plugin -g -f {SPEC}", calls)
         self.assertIn("broker-install ", calls)
         self.assertNotIn("ctmux --install", calls)
+        self.assertNotIn("opencode auth login", calls)
         self.assertEqual((self.opencode_package() / "COMMIT").read_text(), NEW)
 
     def test_opencode_rerun_without_recorded_commit(self):
@@ -1509,7 +1506,7 @@ class InstallTest(Case):
             clients="opencode",
             docker="y",
             opencode=PROVIDER_ANSWERS,
-            logins=[(PEM_Q, ""), (r"OpenCode provider lan API key \(hidden\):", KEY)],
+            logins=[(PEM_Q, ""), (OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)],
         )
         self.assert_ok(result)
         self.assertNotIn("plugins =", self.config().read_text())
@@ -1562,41 +1559,142 @@ class InstallTest(Case):
             logins=[
                 (TOKEN_Q, TOKEN),
                 (PEM_Q, ""),
-                (r"OpenCode provider lan API key \(hidden\):", KEY),
+                (OPENCODE_LOGIN_Q, "lan"),
+                (r"API key:", KEY),
             ],
         )
         self.assert_ok(result)
         calls = self.calls()
-        self.assertIn("agent-pm-broker login opencode lan", calls)
+        login = f"agent-pm-broker login opencode lan --auth-file {self.auth_json()}"
+        self.assertIn(login, calls)
         self.assertLess(
             calls.index("agent-pm-broker login claude"),
-            calls.index("agent-pm-broker login opencode lan"),
+            calls.index(login),
         )
-        self.assertNotIn("opencode auth login", calls)
+        self.assertEqual(calls.count("opencode auth login"), 1)
+        self.assertLess(calls.index("opencode auth login"), calls.index(login))
         self.assertLess(
             result.stderr.index("==> broker\n"), result.stderr.index("==> OpenCode key")
         )
-        self.assertFalse(self.auth_json().exists())
+        self.assertEqual(json.loads(self.auth_json().read_text())["lan"]["key"], KEY)
+        self.assertEqual((self.fakes / "keychain/agent-pm-opencode").read_text(), KEY)
+        self.assertEqual(self.auth_json().stat().st_mode & 0o777, 0o600)
+        self.assertNotIn(KEY, result.tty)
         self.assertTrue(self.state()["login_opencode"].endswith(" lan"))
-        self.assert_ok(self.again())
-        self.assertNotIn("agent-pm-broker login opencode lan", self.calls())
+        result = self.again()
+        self.assert_ok(result)
+        self.assertNotIn(login, self.calls())
+        self.assertNotIn("opencode auth login", self.calls())
         self.assert_secret_free(KEY, TOKEN, result=result)
         (self.fakes / "keychain/agent-pm-opencode").unlink()
-        login = (r"OpenCode provider lan API key \(hidden\):", KEY)
-        self.assert_ok(self.again(answers=[login]))
-        self.assertIn("agent-pm-broker login opencode lan", self.calls())
+        self.assert_ok(self.again())
+        self.assertIn(login, self.calls())
+        self.assertNotIn("opencode auth login", self.calls())
+        binary = self.root / "usr/local/libexec/agent-pm/agent-pm-broker"
+        binary.write_text(binary.read_text() + "\n# replacement fake broker build\n")
+        self.assert_ok(self.again(answers=[(TOKEN_Q, TOKEN)]))
+        self.assertIn(login, self.calls())
+        self.assertNotIn("opencode auth login", self.calls())
+        self.auth_json().unlink()
+        self.assert_ok(self.again(answers=[(OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)]))
+        self.assertNotIn(login, self.calls())
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertFalse(self.auth_json().exists())
+        self.assertFalse((self.fakes / "keychain/agent-pm-opencode").exists())
+
+    def test_opencode_docker_import_existing_auth_and_preserve_on_cleanup(self):
+        self.auth_json().parent.mkdir(parents=True)
+        self.auth_json().write_text(json.dumps({"lan": {"type": "api", "key": KEY}}))
+        before = self.auth_json().read_bytes()
+        result = self.fresh(clients="opencode", docker="y", opencode=PROVIDER_ANSWERS)
+        self.assert_ok(result)
+        self.assertNotIn("opencode auth login", self.calls())
+        self.assertEqual(self.auth_json().read_bytes(), before)
+        self.assertEqual((self.fakes / "keychain/agent-pm-opencode").read_text(), KEY)
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(self.auth_json().read_bytes(), before)
+        self.assertFalse((self.fakes / "keychain/agent-pm-opencode").exists())
+        self.assert_secret_free(KEY, PASSWORD, result=result)
+
+    def test_opencode_docker_import_failure_retries_without_another_key(self):
+        self.auth_json().parent.mkdir(parents=True)
+        self.auth_json().write_text(json.dumps({"lan": {"type": "api", "key": KEY}}))
+        login = f"agent-pm-broker login opencode lan --auth-file {self.auth_json()}"
+        (self.fakes / "fail").write_text(login)
+        result = self.fresh(
+            clients="opencode",
+            docker="y",
+            opencode=PROVIDER_ANSWERS,
+            logins=[(PEM_Q, ""), (r"Try again\? \[y/N\]", "n")],
+        )
+        self.assert_ok(result)
+        self.assertNotIn("login_opencode", self.state())
+        self.assertFalse((self.fakes / "keychain/agent-pm-opencode").exists())
+        result = self.again()
+        self.assert_ok(result)
+        self.assertIn(login, self.calls())
+        self.assertNotIn("opencode auth login", self.calls())
+        self.assertEqual((self.fakes / "keychain/agent-pm-opencode").read_text(), KEY)
+        self.assert_secret_free(KEY, PASSWORD, result=result)
+
+    def test_opencode_docker_key_from_stdin(self):
+        result = self.run_install(
+            "--opencode-key-stdin",
+            "--password-stdin",
+            "--docker",
+            "--clients",
+            "opencode",
+            stdin=f"{PASSWORD}\n{KEY}\n",
+            answers=[
+                (WRITE_Q, "y"),
+                *PROVIDER_ANSWERS,
+                (WRITE_Q, "y"),
+                (WRITE_Q, "y"),
+                (PEM_Q, ""),
+                (WRITE_Q, "y"),
+            ],
+        )
+        self.assert_ok(result)
+        self.assertEqual(json.loads(self.auth_json().read_text())["lan"]["key"], KEY)
+        self.assertEqual((self.fakes / "keychain/agent-pm-opencode").read_text(), KEY)
+        self.assertNotIn("opencode auth login", self.calls())
+        self.assert_secret_free(KEY, PASSWORD, result=result)
+
+    def test_opencode_docker_preserves_preexisting_broker_on_cleanup(self):
+        item = self.fakes / "keychain/agent-pm-opencode"
+        item.parent.mkdir(parents=True)
+        item.write_text(KEY)
+        result = self.fresh(
+            clients="opencode",
+            docker="y",
+            opencode=PROVIDER_ANSWERS,
+            logins=[(PEM_Q, ""), (OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)],
+        )
+        self.assert_ok(result)
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertFalse(self.auth_json().exists())
+        self.assertEqual(item.read_text(), KEY)
+        self.assert_secret_free(KEY, PASSWORD, result=result)
 
     def test_opencode_empty_key_asked_again_or_skipped(self):
-        key_q = r"OpenCode provider lan API key \(hidden\):"
+        key_q = r"API key:"
         again = r"No lan key stored\. Try again\? \[y/N\]"
         result = self.fresh(
             clients="claude,opencode",
             docker="y",
             opencode=PROVIDER_ANSWERS,
-            logins=[(TOKEN_Q, TOKEN), (PEM_Q, ""), (key_q, ""), (again, "y"), (key_q, KEY)],
+            logins=[
+                (TOKEN_Q, TOKEN),
+                (PEM_Q, ""),
+                (OPENCODE_LOGIN_Q, "lan"),
+                (key_q, ""),
+                (again, "y"),
+                (OPENCODE_LOGIN_Q, "lan"),
+                (key_q, KEY),
+            ],
         )
         self.assert_ok(result)
-        self.assertEqual(self.calls().count("agent-pm-broker login opencode lan"), 2)
+        self.assertEqual(self.calls().count("opencode auth login"), 2)
         self.assertEqual((self.fakes / "keychain/agent-pm-opencode").read_text(), KEY)
         self.assertIn(
             'The first worker that reaches http://10.0.0.5:8080/v1 makes macOS ask "Allow Docker to'
@@ -1604,9 +1702,11 @@ class InstallTest(Case):
             result.stderr,
         )
         (self.fakes / "keychain/agent-pm-opencode").unlink()
-        result = self.again(answers=[(key_q, ""), (again, "n")])
+        self.auth_json().unlink()
+        result = self.again(answers=[(OPENCODE_LOGIN_Q, "lan"), (key_q, ""), (again, "n")])
         self.assert_ok(result)
         self.assertIn("skip: no lan key: rerun install.sh, or run", result.stderr)
+        self.assertFalse((self.fakes / "keychain/agent-pm-opencode").exists())
 
     def test_opencode_tmux_empty_key_skipped(self):
         result = self.fresh(
@@ -2545,7 +2645,7 @@ class InstallTest(Case):
             clients="claude,codex,opencode",
             docker="y",
             opencode=PROVIDER_ANSWERS,
-            logins=[(TOKEN_Q, TOKEN), (PEM_Q, ""), (r"OpenCode provider lan API key", KEY)],
+            logins=[(TOKEN_Q, TOKEN), (PEM_Q, ""), (OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)],
         )
 
     def test_ledger_of_a_fresh_install(self):

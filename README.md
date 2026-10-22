@@ -101,7 +101,7 @@ Without `--clients` and `--docker`/`--no-docker` it starts with a checklist of w
 | `--board <local\|linear>`, `--no-board` | sets up a local or Linear board, or skips board setup (first-run default) |
 | `--launchd`, `--no-launchd` | router/promote jobs; see [Board setup](docs/board.md#setup) |
 | `--opencode-provider <name>`, `--opencode-url <url>`, `--opencode-model <model>`, `--opencode-context <tokens>` | OpenCode's OpenAI-compatible provider, e.g. a LAN model server; its base URL ends `/v1`; its context window (default 65536) |
-| `--opencode-key-stdin` | reads the provider's API key from stdin (tmux Host only: with Docker, type it at the broker's prompt) |
+| `--opencode-key-stdin` | reads the provider's API key from stdin; Docker imports the same key from local OpenCode's `auth.json` into the broker |
 | `--password-stdin` | reads the `sudo` password from stdin, before the key |
 
 With a stdin flag, stdin cannot also carry the script:
