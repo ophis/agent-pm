@@ -1560,21 +1560,25 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertEqual(self.snapshot(), before)
 
-    def test_opencode_rerun_preserves_user_added_schema(self):
+    def test_opencode_cleanup_restores_legacy_backup_without_installed_record(self):
         path = Path(self.home, ".config/opencode/opencode.jsonc")
         path.parent.mkdir(parents=True)
-        path.write_text('{"theme":"mine"}')
+        original = '{"theme": "mine"}\n'
+        path.write_text(original)
         self.assert_ok(self.opencode_only())
-        data = json.loads(path.read_text())
-        self.assertNotIn("$schema", data)
-        data["$schema"] = "https://opencode.ai/config.json"
-        path.write_text(json.dumps(data))
-        self.assert_ok(self.opencode_rerun())
-        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
-        self.assertEqual(
-            json.loads(path.read_text()),
-            {"theme": "mine", "$schema": "https://opencode.ai/config.json"},
+        state = Path(self.agent_pm, "install")
+        self.assertFalse(list(state.glob("*.installed*")))
+        ledger = state / "added"
+        ledger.write_text(
+            "".join(
+                line
+                for line in ledger.read_text().splitlines(keepends=True)
+                if not line.startswith("opencode-provider\t")
+            )
         )
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(path.read_text(), original)
+        self.assert_secret_free(KEY, PASSWORD)
 
     def test_opencode_existing_global_provider_is_not_owned(self):
         path = Path(self.home, ".config/opencode/opencode.jsonc")
@@ -1596,35 +1600,6 @@ class InstallTest(Case):
         self.assertIn("lan", json.loads(path.read_text())["provider"])
         self.assertIn(f"opencode-provider\t{path}\tlan", self.ledger())
 
-    def test_opencode_install_comment_cleanup_install_again(self):
-        self.assert_ok(self.opencode_only())
-        path = Path(self.home, ".config/opencode/opencode.jsonc")
-        note = "// user added after installation\n"
-        path.write_text(path.read_text() + note)
-        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
-        self.assertEqual(path.read_text(), "{}\n" + note)
-        self.assert_ok(self.opencode_only())
-        data = json.loads(path.read_text())
-        self.assertIn("lan", data["provider"])
-        self.assertIn(SPEC, data["plugin"])
-        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
-        self.assertEqual(path.read_text(), "{}\n" + note)
-
-    def test_opencode_cleanup_keeps_later_user_config(self):
-        self.assert_ok(self.opencode_only())
-        path = Path(self.home, ".config/opencode/opencode.jsonc")
-        data = json.loads(path.read_text())
-        data["theme"] = "mine"
-        data["provider"]["user"] = {"name": "mine"}
-        data["plugin"].append("user-plugin")
-        path.write_text(json.dumps(data))
-        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
-        self.assertEqual(
-            json.loads(path.read_text()),
-            {"theme": "mine", "provider": {"user": {"name": "mine"}}, "plugin": ["user-plugin"]},
-        )
-        self.assertEqual(sorted(p.name for p in path.parent.iterdir()), ["opencode.jsonc"])
-
     def test_opencode_cleanup_keeps_second_global_config(self):
         self.assert_ok(self.opencode_only())
         path = Path(self.home, ".config/opencode/opencode.json")
@@ -1633,16 +1608,6 @@ class InstallTest(Case):
         self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
         self.assertEqual(path.read_text(), original)
         self.assertFalse(path.with_suffix(".jsonc").exists())
-
-    def test_opencode_cleanup_keeps_config_inside_agent_root(self):
-        self.env["XDG_CONFIG_HOME"] = str(Path(self.agent_pm, "config"))
-        self.assert_ok(self.opencode_only())
-        path = Path(self.env["XDG_CONFIG_HOME"], "opencode/opencode.jsonc")
-        data = json.loads(path.read_text())
-        data["theme"] = "mine"
-        path.write_text(json.dumps(data))
-        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
-        self.assertEqual(json.loads(path.read_text()), {"theme": "mine"})
 
     def opencode_without_plugin(self):
         flags = ("--clients", "claude,opencode", "--no-docker", "--opencode-provider", "lan")
@@ -1679,15 +1644,6 @@ class InstallTest(Case):
         self.assertEqual(json.loads(path.read_text())["plugin"], [SPEC])
         self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
         self.assertEqual(json.loads(path.read_text()), {"plugin": [user_spec]})
-
-    def test_opencode_cleanup_keeps_added_comment_without_settings(self):
-        self.assert_ok(self.opencode_only())
-        path = Path(self.home, ".config/opencode/opencode.jsonc")
-        path.write_text(path.read_text() + "\n// user note after installation\n")
-        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
-        self.assertIn("// user note after installation", path.read_text())
-        self.assertNotIn(SPEC, path.read_text())
-        self.assertNotIn('"lan"', path.read_text())
 
     def test_opencode_key_from_stdin(self):
         self.auth_json().parent.mkdir(parents=True)

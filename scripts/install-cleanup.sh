@@ -500,32 +500,6 @@ def run():
         write(state / ("opencode-provider-" + name + ".json"), json.dumps(record))
         write(plan, new)
         print(path)
-    elif action == "prepare-plugin":
-        installed, = args
-        current, _ = parse(load(path))
-        write(Path(installed + ".pending"), json.dumps({"schema": "$schema" in current, "created": not path.exists()}))
-    elif action == "record-plugin":
-        before, installed, spec = args
-        installed = Path(installed)
-        current, _ = parse(load(path))
-        baseline, _ = parse(Path(before).read_text(encoding="utf-8"))
-        pending = Path(str(installed) + ".pending")
-        evidence, _ = parse(load(pending))
-        tracked, _ = parse(load(installed)) if installed.exists() else (baseline.copy(), "")
-        if not installed.exists():
-            tracked["_agent_pm_created"] = evidence.get("created") is True
-        plugins = current.get("plugin", [])
-        previous = tracked.get("plugin", [])
-        if not isinstance(plugins, list) or not isinstance(previous, list):
-            raise ValueError()
-        if spec in plugins:
-            prefix = spec.split("@", 1)[0] + "@"
-            tracked["plugin"] = [p for p in previous if not isinstance(p, str) or not p.startswith(prefix)] + [spec]
-        if ("$schema" not in baseline and evidence.get("schema") is False
-                and current.get("$schema") == "https://opencode.ai/config.json"):
-            tracked["$schema"] = current["$schema"]
-        write(installed, json.dumps(tracked))
-        pending.unlink(missing_ok=True)
     elif action == "remove-provider":
         state, name = args
         if not path.exists():
@@ -539,63 +513,10 @@ def run():
         keys = ["provider"] if len(providers) == 1 and not expected["container"] else ["provider", name]
         new = edit(text, keys, None, remove=True)
         remaining, _ = parse(new)
-        if expected["created"] and not remaining and not notes(new):
+        if expected["created"] and not remaining and not notes(new) and path.parent != Path(state):
             path.unlink()
         else:
             write(path, new)
-    elif action == "remove-plugin":
-        before, installed = map(Path, args)
-        if not path.exists():
-            return
-        original = before.read_text(encoding="utf-8")
-        baseline, _ = parse(original)
-        added, _ = parse(installed.read_text(encoding="utf-8"))
-        text = load(path)
-        current, _ = parse(text)
-        old_plugins = baseline.get("plugin", [])
-        installed_plugins = added.get("plugin", [])
-        plugins = current.get("plugin", [])
-        if not all(isinstance(p, list) for p in (old_plugins, installed_plugins, plugins)):
-            raise ValueError()
-        owned = [p for p in installed_plugins if p not in old_plugins]
-        present_owned = [p for p in plugins if p in owned]
-        kept = [p for p in plugins if p not in owned]
-        for index, old in enumerate(old_plugins):
-            if old in kept or old in installed_plugins or not isinstance(old, str):
-                continue
-            replacement = next((p for p in present_owned if isinstance(p, str)
-                                and p.split("@", 1)[0] == old.split("@", 1)[0]), None)
-            if replacement is None:
-                continue
-            following = next((p for p in old_plugins[index + 1:] if p in kept), None)
-            previous = next((p for p in reversed(old_plugins[:index]) if p in kept), None)
-            position = (kept.index(following) if following is not None else kept.index(previous) + 1
-                        if previous is not None else min(plugins.index(replacement), len(kept)))
-            kept.insert(position, old)
-        if kept != plugins:
-            text = edit(text, ["plugin"], kept, remove=not kept and "plugin" not in baseline)
-        if "$schema" not in baseline and "$schema" in added and current.get("$schema") == added["$schema"]:
-            text = edit(text, ["$schema"], None, remove=True)
-        result, _ = parse(text)
-        if result == baseline:
-            extra = notes(text)
-            for note in notes(original):
-                if note in extra:
-                    extra.remove(note)
-            if not original and not extra and added.get("_agent_pm_created") is True:
-                path.unlink()
-                return
-            text = original or ("{}\n" if extra else "")
-            if extra:
-                text = text.rstrip() + "\n" + "\n".join(extra) + "\n"
-        else:
-            missing = notes(original)
-            for note in notes(text):
-                if note in missing:
-                    missing.remove(note)
-            if missing:
-                text = text.rstrip() + "\n" + "\n".join(missing) + "\n"
-        write(path, text)
     else:
         raise ValueError()
 
@@ -693,7 +614,7 @@ config_file() {
   fi
 }
 
-# Removes registered provider values and the plugin delta; leaves unrelated user edits in place.
+# Removes registered provider values before restoring the pre-plugin config copies.
 opencode_configs() {
   local path backup name parent paths file
   step "OpenCode config"
@@ -701,19 +622,22 @@ opencode_configs() {
   while IFS=$'\t' read -r _ path name; do
     [ -n "$name" ] || continue
     opencode_config_edit remove-provider "$path" "$state_dir" "$name"
+    backup=$state_dir/${path##*/}.orig
+    if [ -s "$backup" ]; then opencode_config_edit remove-provider "$backup" "$state_dir" "$name"; fi
     drop "opencode-provider"$'\t'"$path"$'\t'"$name"
   done <<<"$(of_kind opencode-provider)"
   while IFS=$'\t' read -r _ path; do
     [ -n "$path" ] || continue
     backup=$state_dir/${path##*/}.orig
     [ -f "$backup" ] || die "no $backup to restore"
-    opencode_config_edit remove-plugin "$path" "$backup" "$state_dir/${path##*/}.installed"
+    cp "$backup" "$path"
     drop "opencode-config"$'\t'"$path"
   done <<<"$(of_kind opencode-config)"
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     for file in "${path%/*}/opencode.json" "${path%/*}/opencode.jsonc"; do
       [ -f "$file" ] || continue
+      if of_kind file | grep -qxF "file"$'\t'"$file"; then continue; fi
       drop "file"$'\t'"$file"
       parent=${file%/*}
       while under_home "$parent"; do
@@ -859,7 +783,7 @@ main() {
     die "records no step removed are left in $ledger"
   fi
   rm -rf "$state_dir"
-  if [ -n "$agent_root" ]; then rmdir "$HOME/.agent-pm" 2>/dev/null || true; fi
+  if [ -n "$agent_root" ] && [ ! -e "$HOME/.agent-pm/board" ]; then rm -rf "$HOME/.agent-pm"; fi
   current=
   say "Removed what install.sh added."
 }

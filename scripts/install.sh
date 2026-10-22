@@ -1162,37 +1162,11 @@ ref_commit() {
   printf '%s' "$commit"
 }
 
-opencode_config_before() {
-  local file conf=$1
-  for file in "$conf/opencode.json" "$conf/opencode.jsonc"; do
-    if { [ -f "$file" ] || [ "${file##*/}" = opencode.jsonc ]; } && ! recorded opencode-config "$file"; then
-      if [ -f "$file" ] && ! recorded file "$file"; then
-        cp "$file" "$state_dir/${file##*/}.orig"
-      else
-        : >"$state_dir/${file##*/}.orig"
-      fi
-      ledger_add opencode-config "$file"
-    fi
-    if recorded opencode-config "$file"; then
-      opencode_config_edit prepare-plugin "$file" "$state_dir/${file##*/}.installed"
-    fi
-  done
-}
-
-opencode_config_record() {
-  local file conf=$1 spec=$2
-  for file in "$conf/opencode.json" "$conf/opencode.jsonc"; do
-    if recorded opencode-config "$file"; then
-      opencode_config_edit record-plugin "$file" "$state_dir/${file##*/}.orig" "$state_dir/${file##*/}.installed" "$spec"
-    fi
-  done
-}
-
 # agent-pm's OpenCode plugin, the way OpenCode installs one: opencode plugin -g, which adds it to the global config
-# and downloads it. Before/after config copies let cleanup remove only the plugin additions.
+# and downloads it. The config there before is kept for the cleanup; the files OpenCode adds beside it are recorded.
 # OpenCode never downloads a spec again, so when $ref has moved since the last download its copy is deleted first.
 opencode_plugin() {
-  local spec conf name dir commit had rc=0
+  local spec conf file name dir commit had
   step "OpenCode plugin"
   if ! has opencode; then
     skip "OpenCode not chosen"
@@ -1209,25 +1183,26 @@ opencode_plugin() {
       return
     fi
   elif [ -d "$dir/node_modules/agent-pm" ] && [ "$had" = "$commit" ]; then
-    opencode_config_before "$conf"
-    opencode_config_record "$conf" "$spec"
     skip "$spec at ${commit:0:12}"
     return
   else
     [ -d "$dir" ] && [ -n "$had" ] || had=unknown
     say "    $spec: $ref is at ${commit:0:12}, OpenCode's copy at ${had:0:12}: downloading it again"
   fi
-  opencode_config_before "$conf"
-  for name in package.json package-lock.json .gitignore; do
+  for file in "$conf/opencode.json" "$conf/opencode.jsonc"; do
+    if [ -f "$file" ] && ! recorded opencode-config "$file"; then
+      cp "$file" "$state_dir/${file##*/}.orig"
+      ledger_add opencode-config "$file"
+    fi
+  done
+  for name in opencode.jsonc package.json package-lock.json .gitignore; do
     [ -e "$conf/$name" ] || ledger_add file "$conf/$name"
   done
   record_dir "$conf/node_modules"
   record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/packages"
   record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/packages/${spec%%//*}"
   rm -rf -- "$dir"
-  "$opencode_prefix/bin/opencode" plugin -g -f "$spec" </dev/null >&2 || rc=$?
-  opencode_config_record "$conf" "$spec"
-  [ "$rc" = 0 ] || return "$rc"
+  "$opencode_prefix/bin/opencode" plugin -g -f "$spec" </dev/null >&2
   [ -d "$dir/node_modules/agent-pm" ] || die "OpenCode did not download $spec"
   state_set opencode_plugin_commit "$commit"
 }
@@ -1359,32 +1334,6 @@ def run():
         write(state / ("opencode-provider-" + name + ".json"), json.dumps(record))
         write(plan, new)
         print(path)
-    elif action == "prepare-plugin":
-        installed, = args
-        current, _ = parse(load(path))
-        write(Path(installed + ".pending"), json.dumps({"schema": "$schema" in current, "created": not path.exists()}))
-    elif action == "record-plugin":
-        before, installed, spec = args
-        installed = Path(installed)
-        current, _ = parse(load(path))
-        baseline, _ = parse(Path(before).read_text(encoding="utf-8"))
-        pending = Path(str(installed) + ".pending")
-        evidence, _ = parse(load(pending))
-        tracked, _ = parse(load(installed)) if installed.exists() else (baseline.copy(), "")
-        if not installed.exists():
-            tracked["_agent_pm_created"] = evidence.get("created") is True
-        plugins = current.get("plugin", [])
-        previous = tracked.get("plugin", [])
-        if not isinstance(plugins, list) or not isinstance(previous, list):
-            raise ValueError()
-        if spec in plugins:
-            prefix = spec.split("@", 1)[0] + "@"
-            tracked["plugin"] = [p for p in previous if not isinstance(p, str) or not p.startswith(prefix)] + [spec]
-        if ("$schema" not in baseline and evidence.get("schema") is False
-                and current.get("$schema") == "https://opencode.ai/config.json"):
-            tracked["$schema"] = current["$schema"]
-        write(installed, json.dumps(tracked))
-        pending.unlink(missing_ok=True)
     elif action == "remove-provider":
         state, name = args
         if not path.exists():
@@ -1398,63 +1347,10 @@ def run():
         keys = ["provider"] if len(providers) == 1 and not expected["container"] else ["provider", name]
         new = edit(text, keys, None, remove=True)
         remaining, _ = parse(new)
-        if expected["created"] and not remaining and not notes(new):
+        if expected["created"] and not remaining and not notes(new) and path.parent != Path(state):
             path.unlink()
         else:
             write(path, new)
-    elif action == "remove-plugin":
-        before, installed = map(Path, args)
-        if not path.exists():
-            return
-        original = before.read_text(encoding="utf-8")
-        baseline, _ = parse(original)
-        added, _ = parse(installed.read_text(encoding="utf-8"))
-        text = load(path)
-        current, _ = parse(text)
-        old_plugins = baseline.get("plugin", [])
-        installed_plugins = added.get("plugin", [])
-        plugins = current.get("plugin", [])
-        if not all(isinstance(p, list) for p in (old_plugins, installed_plugins, plugins)):
-            raise ValueError()
-        owned = [p for p in installed_plugins if p not in old_plugins]
-        present_owned = [p for p in plugins if p in owned]
-        kept = [p for p in plugins if p not in owned]
-        for index, old in enumerate(old_plugins):
-            if old in kept or old in installed_plugins or not isinstance(old, str):
-                continue
-            replacement = next((p for p in present_owned if isinstance(p, str)
-                                and p.split("@", 1)[0] == old.split("@", 1)[0]), None)
-            if replacement is None:
-                continue
-            following = next((p for p in old_plugins[index + 1:] if p in kept), None)
-            previous = next((p for p in reversed(old_plugins[:index]) if p in kept), None)
-            position = (kept.index(following) if following is not None else kept.index(previous) + 1
-                        if previous is not None else min(plugins.index(replacement), len(kept)))
-            kept.insert(position, old)
-        if kept != plugins:
-            text = edit(text, ["plugin"], kept, remove=not kept and "plugin" not in baseline)
-        if "$schema" not in baseline and "$schema" in added and current.get("$schema") == added["$schema"]:
-            text = edit(text, ["$schema"], None, remove=True)
-        result, _ = parse(text)
-        if result == baseline:
-            extra = notes(text)
-            for note in notes(original):
-                if note in extra:
-                    extra.remove(note)
-            if not original and not extra and added.get("_agent_pm_created") is True:
-                path.unlink()
-                return
-            text = original or ("{}\n" if extra else "")
-            if extra:
-                text = text.rstrip() + "\n" + "\n".join(extra) + "\n"
-        else:
-            missing = notes(original)
-            for note in notes(text):
-                if note in missing:
-                    missing.remove(note)
-            if missing:
-                text = text.rstrip() + "\n" + "\n".join(missing) + "\n"
-        write(path, text)
     else:
         raise ValueError()
 
