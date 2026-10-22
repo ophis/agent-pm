@@ -18,6 +18,7 @@ from unittest import mock
 
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.claude.tui import ClaudeTui
+from agent_pm.session.clients.opencode import OpenCodeClient
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.tmux_cli import TuiError
 from agent_pm.session.engine.types import (
@@ -311,6 +312,37 @@ class AttachTest(Base):
         with self.assertRaisesRegex(SessionError, "session w1 has no terminal"):
             tui.TuiMode.attach(NAME, state, self.client, host=self.host)
         process.close.assert_not_called()
+
+    def test_opencode_attach_filters_permissions_using_the_hosts_mode(self):
+        client = OpenCodeClient({"modes": {"auto": [], "yolo": ["--auto"]}})
+        state = self.state(
+            client="opencode",
+            client_hook={
+                "module": "agent_pm.session.clients.opencode.tui",
+                "state": {"cwd": self.tmp, "store": client.common.store},
+                "roots": [],
+            },
+        )
+        self.write_state(state)
+        native = "ses_0123456789abABCDEFGHIJKLMN"
+        asks = (
+            record("permission.asked", session_id=native, permission="custom_tool"),
+            record("question.asked", session_id=native, questions=["Database"]),
+        )
+        self.append(*asks)
+        for isolated in (False, True):
+            with (
+                self.subTest(isolated=isolated),
+                mock.patch.object(self.host, "_isolated", new=isolated),
+            ):
+                mode = tui.TuiMode.attach(NAME, state, client, host=self.host)
+                expected = [] if isolated else [Blocked("custom_tool")]
+                expected.append(Blocked("question: Database"))
+                self.assertEqual(mode.replayed, (ClientBound(native), *expected))
+                self.append(*asks)
+                self.assertEqual(mode.poll(0), (expected, False))
+                os.unlink(self.hooks)
+                self.append(*asks)
 
     def attach(self, *lines, client=None) -> tui.TuiMode:
         """TuiMode.attach of self.client (else `client`) on a session dir with session.json and
