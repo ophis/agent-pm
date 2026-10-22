@@ -133,10 +133,7 @@ class Promoter:
                     "handoff-wait",
                     src.ident,
                     once=True,
-                    reason=(
-                        f"in {self.tracker.state_name(IssueState.APPROVED)} "
-                        f"under {MATURE.seconds // 60} min"
-                    ),
+                    reason=f"handoff age under {MATURE.seconds // 60} min",
                 )
                 continue
             try:
@@ -250,7 +247,7 @@ class Promoter:
             self.say(
                 "handoff-error",
                 src.ident,
-                reason=f"could not move to {self.tracker.state_name(IssueState.REVIEW)}",
+                reason="could not return failed handoff for review",
                 error=one_line(e),
             )
 

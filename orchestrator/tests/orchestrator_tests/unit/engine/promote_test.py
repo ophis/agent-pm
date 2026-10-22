@@ -16,7 +16,7 @@ from agent_pm.orchestrator.engine import config, promote, prune
 from agent_pm.orchestrator.engine import log as event_log
 from agent_pm.orchestrator.engine.flow import workflow
 from agent_pm.orchestrator.engine.flow.types import IssueState
-from agent_pm.orchestrator.engine.types import IssueError
+from agent_pm.orchestrator.engine.types import IssueError, LinearError
 from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
 from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
 from orchestrator_tests.case import Case
@@ -44,6 +44,29 @@ from orchestrator_tests.unit.run_fixtures import HARNESS, logged, show
 
 
 class PromotionFailures(Base):
+    def test_failed_bounce_needs_no_state_lookup_and_keeps_processing(self):
+        src = self.ready("DR-1", handoff=90)
+        other = self.ready("DR-2")
+        self.fake.fail[ops.M_STATE, "DR-1"] = "move failed"
+        names = []
+
+        def gql(query, **variables):
+            if query == linear_tracker.Q_STATE_NAME:
+                names.append(variables)
+                raise LinearError("state lookup failed")
+            return self.fake(query, **variables)
+
+        self.assertEqual(self.run_main(gql=gql), 0)
+        self.assertEqual((src["state"], other["state"]), ("Handoff", "Done"))
+        self.assertEqual(names, [])
+        self.assertEqual(len(FakePruner.calls), 1)
+        errors = [e for e in logged(self.logs) if e["kind"] == "handoff-error"]
+        self.assertEqual(len(errors), 2)
+        self.assertEqual(errors[-1]["reason"], "could not return failed handoff for review")
+        self.assertIn("move failed", errors[-1]["error"])
+        writes = [v for query, v in self.fake.calls if query == ops.M_STATE and v["i"] == "DR-1"]
+        self.assertEqual(len(writes), 2)
+
     def test_error_on_one_issue_others_still_run(self):
         self.ready("DR-1")
         other = self.ready("DR-2")
@@ -561,12 +584,34 @@ class HandoffPromotion(Base):
         self.run_main()
         self.assertEqual(self.fake.mutations, [])
         self.assertEqual(src["state"], "Handoff")
-        self.assertEqual(self.out, "handoff-wait DR-1 reason=in Handoff under 10 min")
+        self.assertEqual(self.out, "handoff-wait DR-1 reason=handoff age under 10 min")
         self.run_main()
         self.assertEqual((self.out, src["state"]), ("", "Handoff"))
         self.fake.issues["DR-1"]["history"][-1]["createdAt"] = ago(10)
         self.run_main()
         self.assertEqual(src["state"], "Done")
+
+    def test_wait_needs_no_state_lookup_across_ticks_and_keeps_processing(self):
+        src = self.ready("DR-1", handoff=5)
+        other = self.ready("DR-2", handoff=1)
+        mature = self.ready("DR-3")
+        names = []
+
+        def gql(query, **variables):
+            if query == linear_tracker.Q_STATE_NAME:
+                names.append(variables)
+                raise LinearError("state lookup failed")
+            return self.fake(query, **variables)
+
+        for _ in range(2):
+            self.assertEqual(self.run_main(gql=gql), 0)
+            self.assertEqual(len(FakePruner.calls), 1)
+        self.assertEqual(names, [])
+        self.assertEqual(
+            (src["state"], other["state"], mature["state"]), ("Handoff", "Handoff", "Done")
+        )
+        waits = [e for e in logged(self.logs) if e["kind"] == "handoff-wait"]
+        self.assertEqual([e["issue"] for e in waits], ["DR-1", "DR-2"])
 
     def test_never_in_review_takes_all_human_comments(self):
         self.fake.add("DR-1")
@@ -866,7 +911,7 @@ class LocalBoardPromotion(Base):
         self.assertEqual(self.run_main(), 0, self.err)
         self.assertEqual(self.files(), before)
         self.assertIn("handoff-wait LOC-1", self.out)
-        self.assertIn("reason=in approved/ under 10 min", self.out)
+        self.assertIn("reason=handoff age under 10 min", self.out)
 
     def test_default_research_prefix_is_replaced_by_pm_prefix(self):
         self.approved()
@@ -919,9 +964,6 @@ class LocalBoardPromotion(Base):
         """The source archived meanwhile: its bounce fails as a handoff-error, not a crash."""
 
         class Archived:
-            def state_name(self, _state):
-                return "review/"
-
             def comment_and_move(self, *_, **__):
                 raise IssueError("LOC-1: archived")
 
@@ -932,7 +974,11 @@ class LocalBoardPromotion(Base):
         [record] = logged(self.logs)
         self.assertEqual(
             (record["kind"], record["reason"], record["error"]),
-            ("handoff-error", "could not move to review/", "IssueError: LOC-1: archived"),
+            (
+                "handoff-error",
+                "could not return failed handoff for review",
+                "IssueError: LOC-1: archived",
+            ),
         )
 
 
@@ -949,7 +995,6 @@ PROMOTION = {  # one Handoff issue promoted
 WAITING = {
     "linear_tracker.Q_HANDOFF": 1,
     "linear_tracker.Q_DETAIL": 1,
-    "linear_tracker.Q_STATE_NAME": 1,
 }  # TASK-1003 not yet due
 
 
@@ -961,7 +1006,7 @@ class RequestCountTest(HostScale):
         expected = {
             "cold": {
                 "setup": SETUP_REQUESTS,
-                "promote": {"linear_tracker.Q_HANDOFF": 1, "linear_tracker.Q_STATE_NAME": 1, **two},
+                "promote": {"linear_tracker.Q_HANDOFF": 1, **two},
                 "prune": {
                     "linear_tracker.Q_SNAPSHOTS": 6,
                     "linear_tracker.Q_ISSUE": 2,
@@ -1008,5 +1053,5 @@ class RequestCountTest(HostScale):
         self.assertLessEqual(max(sum(r["prune"].values()) for r in found.values()), cap)
         self.assertEqual(
             {name: sum(sum(p.values()) for p in r.values()) for name, r in found.items()},
-            {"cold": 46, "warm": 12, "quiet": 6, "next_day": 28},
+            {"cold": 45, "warm": 11, "quiet": 5, "next_day": 28},
         )
