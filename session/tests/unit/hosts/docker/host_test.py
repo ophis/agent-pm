@@ -315,7 +315,7 @@ class ConfigTest(Base):
     def test_provider_usage_preserves_host_credential_failures(self):
         request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
         for exit_code, code, message in (
-            (5, "login_required", "secret-store agent-pm-strata: keychain locked"),
+            (11, "keychain_failed", "secret-store agent-pm-strata: keychain locked"),
             (11, "keychain_failed", "secret-store agent-pm-strata: credentials unreadable"),
         ):
             with self.subTest(code=code):
@@ -324,6 +324,15 @@ class ConfigTest(Base):
                 with self.assertRaises(SessionError) as caught:
                     self.host._provider_usage(request)
                 self.assertIs(caught.exception, error)
+
+    def test_provider_usage_reports_missing_or_invalid_key_as_client_configuration(self):
+        request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+        for message in ("No API key in agent-pm-opencode", "Invalid API key in agent-pm-opencode"):
+            with self.subTest(message=message):
+                error = BrokerError(5, "login_required", message, "not_needed", None)
+                self.broker.failing["probe-provider"] = error
+                with self.assertRaisesRegex(ConfigError, message):
+                    self.host._provider_usage(request)
 
     def test_the_packaged_table_parses_and_tmux_stays_the_default(self):
         with open(os.path.join(REPO, "session/src/agent_pm/session/config.toml"), "rb") as f:

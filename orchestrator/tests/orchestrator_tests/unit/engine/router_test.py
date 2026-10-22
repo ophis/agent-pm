@@ -14,6 +14,7 @@ import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
@@ -42,6 +43,8 @@ from agent_pm.orchestrator.trackers.linear import (
 )
 from agent_pm.session import ConfigError, Session, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
+from agent_pm.session.hosts.docker.broker import BrokerError
+from agent_pm.session.hosts.docker.host import DockerHost
 from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV, OutcomeStatus, Record
 from orchestrator_tests.process_fixtures import TimeoutExpired
 from orchestrator_tests.router_fixtures import (
@@ -2389,11 +2392,135 @@ class ScheduledUsageGates(TickBase):
     recorded client.
     """
 
+    def test_provider_credential_error_keeps_other_clients_schedulable(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        for dry in (False, True):
+            for selected in (False, True):
+                for message in (
+                    "No API key in agent-pm-opencode",
+                    "Invalid API key in agent-pm-opencode",
+                ):
+                    with self.subTest(dry=dry, selected=selected, message=message):
+                        self.lines = []
+                        failed = "b" if selected else "a"
+                        healthy = "a" if selected else "b"
+                        broker = mock.Mock()
+                        broker.probe_provider.side_effect = BrokerError(
+                            5, "login_required", message, "not_needed", None
+                        )
+                        host = SimpleNamespace(broker=broker)
+                        request = SimpleNamespace(
+                            provider="strata", base_url="https://strata.test/v1"
+                        )
+
+                        def usage(client, failed=failed, host=host, request=request):
+                            self.api.usage_calls.append(client)
+                            if client == failed:
+                                return DockerHost._provider_usage(host, request)
+                            return reading(10)
+
+                        labels = [label("Selected", AGENT_B, AGENT_GROUP)] if selected else []
+                        fake = self.fake(
+                            issue("TASK-1", "Todo", "researcher", priority=1, labels=labels),
+                            issue("TASK-2", "Todo", "researcher" if selected else "pm", priority=2),
+                        )
+                        before = self.before()
+                        with mock.patch.object(self.api, "usage", side_effect=usage):
+                            self.assertEqual(self.tick(fake, *(["--dry-run"] if dry else [])), 0)
+                        self.assertEqual(self.api.usage_calls, [failed, healthy])
+                        if selected:
+                            if dry:
+                                self.assertIn("would comment TASK-1", "\n".join(self.said()))
+                            else:
+                                self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
+                                self.assertIn(message, fake.issues["TASK-1"]["comments"][0])
+                        else:
+                            self.assertIn(
+                                "usage-skip TASK-1 client=a reason=usage unknown", self.said()
+                            )
+                            self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
+                            self.assertFalse(fake.issues["TASK-1"].get("comments"))
+                        if dry:
+                            self.assertEqual(
+                                (fake.mutations, self.start.launches, self.state), ([], [], before)
+                            )
+                        else:
+                            self.assertEqual(
+                                [(item.issue, item.client) for item in self.start.launches],
+                                [("TASK-2", healthy)],
+                            )
+                        self.assertFalse(fake.issues["TASK-2"].get("comments"))
+
+    def test_resume_probe_failure_only_stops_tick_for_host_errors(self):
+        for dry in (False, True):
+            for host_failure in (False, True):
+                with self.subTest(dry=dry, host_failure=host_failure):
+                    self.lines = []
+                    broker = mock.Mock()
+                    message = (
+                        "agent-pm-opencode: keychain locked"
+                        if host_failure
+                        else "agent-pm-opencode: no API key"
+                    )
+                    broker.probe_provider.side_effect = BrokerError(
+                        11 if host_failure else 5,
+                        "keychain_failed" if host_failure else "login_required",
+                        message,
+                        "not_needed",
+                        None,
+                    )
+                    host = SimpleNamespace(broker=broker)
+                    request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+
+                    def usage(client, host=host, request=request):
+                        self.api.usage_calls.append(client)
+                        if client == "a":
+                            return DockerHost._provider_usage(host, request)
+                        return reading(10)
+
+                    fake = self.fake(
+                        issue("TASK-1", "In Progress", "researcher", priority=1),
+                        issue("TASK-2", "Todo", "pm", priority=2),
+                    )
+                    self.resumable("TASK-1", "saved", 60)
+                    before = self.before()
+                    with mock.patch.object(self.api, "usage", side_effect=usage):
+                        self.assertEqual(
+                            self.tick(fake, *(["--dry-run"] if dry else [])),
+                            2 if host_failure else 0,
+                        )
+                    self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
+                    self.assertFalse(fake.issues["TASK-1"].get("comments"))
+                    if host_failure:
+                        self.assertIn(message, self.err)
+                        self.assertNotIn("launch-error", self.err)
+                        self.assertEqual(self.api.usage_calls, ["a"])
+                    else:
+                        self.assertIn(
+                            "usage-skip TASK-1 client=a reason=usage unknown", self.said()
+                        )
+                        self.assertEqual(self.api.usage_calls, ["a", "b"])
+                    if dry or host_failure:
+                        self.assertEqual(
+                            (fake.mutations, self.start.launches, self.state), ([], [], before)
+                        )
+                    else:
+                        self.assertEqual(
+                            [(item.issue, item.client) for item in self.start.launches],
+                            [("TASK-2", "b")],
+                        )
+
     def test_host_usage_failure_stops_tick_without_issue_writes(self):
         self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
         for dry in (False, True):
             for selected in (False, True):
-                for reason in ("keychain locked", "credentials unreadable"):
+                for reason in (
+                    "keychain locked",
+                    "credentials unreadable",
+                    "broker missing",
+                    "broker protocol mismatch",
+                    "broker timed out",
+                ):
                     with self.subTest(dry=dry, selected=selected, reason=reason):
                         self.lines = []
                         client = "b" if selected else "a"
