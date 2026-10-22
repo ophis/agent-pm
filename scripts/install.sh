@@ -1494,6 +1494,9 @@ ctmux_install() {
     skip "launchers in ~/.agent-pm/bin"
   fi
   profile_line 'export PATH="$HOME/.agent-pm/bin:$PATH"' "$HOME/.agent-pm/bin"
+  if has opencode; then
+    profile_line 'export PATH="$HOME/.agent-pm/opencode/bin:$PATH"' "$opencode_prefix/bin"
+  fi
 }
 
 # sha256 of the plugin's broker sources: a change means the broker must be reinstalled.
