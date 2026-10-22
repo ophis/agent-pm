@@ -147,36 +147,57 @@ class HelpSafety(Case):
             self.assertEqual((process.returncode, err), (0, ""), command)
             self.assertIn("agent-pm-", out)
 
-    def matrix(self):
+    def matrix(self, root):
         self.assertEqual(sum(len(commands) + 1 for _, commands in SURFACES.values()), 59)
         before = self.snapshot()
-        for root, (package, commands) in SURFACES.items():
-            for leaf in [None, *commands]:
-                for flag in ("--help", "-h"):
-                    arguments = ([] if leaf is None else [leaf]) + [flag]
-                    for entry in ("module", "repository", "installed"):
-                        with self.subTest(root=root, leaf=leaf, flag=flag, entry=entry):
-                            if entry == "module":
-                                command = [
-                                    *PY,
-                                    str(self.probe),
-                                    "-m",
-                                    f"agent_pm.{package}.cli",
-                                    *arguments,
-                                ]
-                            else:
-                                directory = (
-                                    Path(REPO, "bin")
-                                    if entry == "repository"
-                                    else Path(self.agent_pm, "bin")
-                                )
-                                command = [str(directory / f"agent-pm-{root}"), *arguments]
-                            self.help_only(command)
+        package, commands = SURFACES[root]
+        for leaf in [None, *commands]:
+            for flag in ("--help", "-h"):
+                arguments = ([] if leaf is None else [leaf]) + [flag]
+                for entry in ("module", "repository", "installed"):
+                    with self.subTest(root=root, leaf=leaf, flag=flag, entry=entry):
+                        if entry == "module":
+                            command = [
+                                *PY,
+                                str(self.probe),
+                                "-m",
+                                f"agent_pm.{package}.cli",
+                                *arguments,
+                            ]
+                        else:
+                            directory = (
+                                Path(REPO, "bin")
+                                if entry == "repository"
+                                else Path(self.agent_pm, "bin")
+                            )
+                            command = [str(directory / f"agent-pm-{root}"), *arguments]
+                        self.help_only(command)
         self.assertEqual(self.snapshot(), before)
 
-    def test_all_help_without_credentials_services_terminal_or_manager(self):
-        self.matrix()
+    def test_crew_help_without_credentials_services_terminal_or_manager(self):
+        self.matrix("crew")
 
-    def test_all_help_with_malformed_test_owned_configuration(self):
+    def test_crew_help_with_malformed_test_owned_configuration(self):
         Path(self.agent_pm, "config.local.toml").write_text("[malformed\n")
-        self.matrix()
+        self.matrix("crew")
+
+    def test_session_help_without_credentials_services_terminal_or_manager(self):
+        self.matrix("session")
+
+    def test_session_help_with_malformed_test_owned_configuration(self):
+        Path(self.agent_pm, "config.local.toml").write_text("[malformed\n")
+        self.matrix("session")
+
+    def test_delegate_help_without_credentials_services_terminal_or_manager(self):
+        self.matrix("delegate")
+
+    def test_delegate_help_with_malformed_test_owned_configuration(self):
+        Path(self.agent_pm, "config.local.toml").write_text("[malformed\n")
+        self.matrix("delegate")
+
+    def test_orchestrator_help_without_credentials_services_terminal_or_manager(self):
+        self.matrix("orchestrator")
+
+    def test_orchestrator_help_with_malformed_test_owned_configuration(self):
+        Path(self.agent_pm, "config.local.toml").write_text("[malformed\n")
+        self.matrix("orchestrator")
