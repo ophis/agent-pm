@@ -31,7 +31,7 @@ func (o OpencodeKeys) Probe(ctx context.Context, provider, base string, transpor
 		return false, opencodeError(provider, err)
 	}
 	if checkSecret("API key", key) != nil {
-		return false, protocol.New(protocol.KeychainFailed, "Invalid OpenCode provider API key; log in again.")
+		return false, protocol.New(protocol.LoginRequired, "Invalid OpenCode provider API key; log in again.")
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(base, "/")+"/models", nil)
 	if err != nil {

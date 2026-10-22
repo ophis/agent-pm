@@ -149,6 +149,10 @@ Copy `[orchestrator.linear]`'s `agent_label_group` and `[orchestrator.linear.age
 
 The `claim` log records `client` and `client_source=label|default`. A label-selected client's quota configuration or configuration error produces a comment with the client and error's first line, then In Review instead of an interruption retry; fix it → move back to Todo.
 
+A host usage probe failure (for example, the broker cannot read credentials from a locked Keychain) stops the tick, including `--dry-run`, with exit 2 and the underlying reason on stderr. It creates no issue launch-error comment or move for that failure, regardless of whether the client came from a label or the role default. Repair the host credential access, then retry the tick.
+
+A missing or malformed OpenCode provider API key is a client configuration error: a label-selected client gets the issue's repair comment and move to review; a role default stays `usage unknown`. Other clients can still run. Broker `probe-provider` reports these as `login_required`; a locked Keychain or failed Keychain access is `keychain_failed`. Broker installation, protocol and timeout failures also stop the tick.
+
 Each new run selects again, retries included. A session resumes only in the client that created it, so an interrupted run re-reads its labels: when the selection differs from its session's client, the router starts a new session on the selected client instead, the issue staying In Progress. A usage-blocked restart waits for the next tick. Invalid Agent or task labels keep the resume.
 
 Scheduled quota checks use each candidate’s selected or recorded client, probing each Delegate kind/client pair once per tick, regardless of role or task tier; blocked usage logs `usage-skip` without switching clients. On the Docker Host with two or more [Claude accounts](docker-host.md#claude-accounts), the Claude probe reads every account (cached 5 minutes) and passes while any is under the thresholds, the run then starting on the one with the most usage left; every account over logs `usage-skip` with reason `usage`. A role's selected account (`[orchestrator.core.roles.<role>.accounts]`) changes neither: probe and limit hold stay per client. Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default.
@@ -186,7 +190,7 @@ An issue with the Agent group's `OpenCode` label runs OpenCode on the host's Oll
 2. The Docker Host, with the harness on tmux: `[session.hosts] default = "docker"` and `[delegate.delegates] harness_host = "tmux"` ([Docker host › Role runs](docker-host.md#role-runs)). A board run's cwd is untrusted, so on tmux OpenCode refuses to start ([OpenCode sessions](sessions.md#opencode-sessions)). This puts every client's board runs in containers.
 3. An `OpenCode` label in the Agent group, mapped as in [Agent label](#agent-label): `opencode = "<its label id>"` under `[orchestrator.linear.agent_labels]`.
 
-The usage gate probes only the provider of the default `[session.clients.opencode] model`, independently of task tiers: Ollama uses the host's `127.0.0.1:<ollama_port>/api/tags`; configured providers use their `base_url` plus `/models`. A 2xx response permits the run; an unreachable or unauthorized endpoint stays `usage unknown`. Docker probes run in broker protocol 18 with its existing Keychain API key; tmux probes read the selected provider's API entry from OpenCode `auth.json`. Keys stay out of argv, diagnostics and responses; redirects are refused. Task-tier overrides still select each run's model, but do not change the usage probe.
+The usage gate probes only the provider of the default `[session.clients.opencode] model`, independently of task tiers: Ollama uses the host's `127.0.0.1:<ollama_port>/api/tags`; configured providers use their `base_url` plus `/models`. A 2xx response permits the run; an unreachable or unauthorized endpoint stays `usage unknown`. Docker probes run in broker protocol 19 with its existing Keychain API key; tmux probes read the selected provider's API entry from OpenCode `auth.json`. Keys stay out of argv, diagnostics and responses; redirects are refused. Task-tier overrides still select each run's model, but do not change the usage probe.
 
 ## Local board
 
@@ -194,11 +198,11 @@ Create the first issue with `agent-pm-orchestrator issue create --title "First i
 
 Unfinished `blocked_by` cycles (including an issue blocking itself) produce a `dependency-cycle` router diagnostic naming the closed path. Remove the cyclic links in those issue files. The same diagnostic is logged once per 24 hours; `router --dry-run` always shows it without writing. Missing blockers still block, and independent ready issues remain schedulable.
 
-An issue-selected client whose usage probe requires a missing or non-executable program produces `launch-error`, a repair comment and a move to `review/`. An executable client whose usage cannot be read still produces `usage unknown`. Fix the client choice or installation, then move the issue to `ready/`.
+An issue-selected client whose usage probe requires a missing or non-executable program produces `launch-error`, a repair comment and a move to `review/`; fix the client choice or installation, then move the issue to `ready/`. A probe that returns no reading produces `usage unknown`; a [host probe failure](#agent-label) stops the tick without bouncing the issue.
 
 ### Mac mini regression checks
 
-Use a separate initialized local test board with OpenCode, Strata and Docker configured. Upgrade the broker to protocol 18 first. These checks require the real mini; CI results do not replace them.
+Use a separate initialized local test board with OpenCode, Strata and Docker configured. Upgrade the broker to protocol 19 first. These checks require the real mini; CI results do not replace them.
 
 | Case | Action | Expected |
 |---|---|---|

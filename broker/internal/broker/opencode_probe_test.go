@@ -78,6 +78,41 @@ func TestOpencodeProbeFailuresAreOpaque(t *testing.T) {
 	}
 }
 
+func TestOpencodeProbeClassifiesCredentialFailures(t *testing.T) {
+	for name, tc := range map[string]struct {
+		failure error
+		invalid bool
+		code    protocol.Code
+	}{
+		"missing":       {failure: ErrNotFound, code: protocol.LoginRequired},
+		"invalid":       {invalid: true, code: protocol.LoginRequired},
+		"locked":        {failure: ErrNeedsDialog, code: protocol.KeychainFailed},
+		"access failed": {failure: errors.New(apiKey), code: protocol.KeychainFailed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			k := providerKeys("strata")
+			k.readErr = tc.failure
+			if tc.invalid {
+				k.items["agent-pm-opencode/strata"] = []byte("\n")
+			}
+			transport := roundTrip(func(*http.Request) (*http.Response, error) {
+				t.Fatal("credential failure must not contact the provider")
+				return nil, errors.New("unexpected request")
+			})
+			available, err := (OpencodeKeys{Keychain: k}).Probe(context.Background(), "strata", "https://strata.test/v1", transport)
+			var failure *protocol.Error
+			if available || !errors.As(err, &failure) || failure.Code != tc.code || strings.Contains(err.Error(), apiKey) {
+				t.Fatalf("available=%v err=%v", available, err)
+			}
+			for _, key := range k.returned {
+				if !bytes.Equal(key, make([]byte, len(key))) {
+					t.Fatal("key not erased")
+				}
+			}
+		})
+	}
+}
+
 func TestOpencodeProbeRejectsUntrustedInputsBeforeReadingKeys(t *testing.T) {
 	for _, base := range []string{"file:///tmp/key", "https://u:secret@host/v1", "https://host/v1?key=x", "https://host/v1#x", "http://", "http://host/\n", "http://host:bad/v1"} {
 		k := &fakeSecrets{}

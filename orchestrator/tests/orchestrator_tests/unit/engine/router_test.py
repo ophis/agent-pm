@@ -1829,7 +1829,6 @@ class ClientUsage(Base):
             (reading(None, None), None),
             (None, "reason=usage unknown"),
             (ConfigError("no client a"), "reason=usage unknown"),
-            (SessionError("boom"), "reason=usage unknown"),
         )
         for value, why in rows:
             with self.subTest(value=value):
@@ -2389,6 +2388,128 @@ class ScheduledUsageGates(TickBase):
     """FR-46, FR-48, FR-60 over a tick: each candidate gates on its client; a resume keeps its
     recorded client.
     """
+
+    def test_provider_credential_error_keeps_other_clients_schedulable(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        for dry in (False, True):
+            for selected in (False, True):
+                for message in (
+                    "No API key in agent-pm-opencode",
+                    "Invalid API key in agent-pm-opencode",
+                ):
+                    with self.subTest(dry=dry, selected=selected, message=message):
+                        self.lines = []
+                        failed = "b" if selected else "a"
+                        healthy = "a" if selected else "b"
+                        self.api.usages = {failed: ConfigError(message), healthy: reading(10)}
+                        labels = [label("Selected", AGENT_B, AGENT_GROUP)] if selected else []
+                        fake = self.fake(
+                            issue("TASK-1", "Todo", "researcher", priority=1, labels=labels),
+                            issue("TASK-2", "Todo", "researcher" if selected else "pm", priority=2),
+                        )
+                        before = self.before()
+                        self.assertEqual(self.tick(fake, *(["--dry-run"] if dry else [])), 0)
+                        self.assertEqual(self.api.usage_calls, [failed, healthy])
+                        if selected:
+                            if dry:
+                                self.assertIn("would comment TASK-1", "\n".join(self.said()))
+                            else:
+                                self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
+                                self.assertIn(message, fake.issues["TASK-1"]["comments"][0])
+                        else:
+                            self.assertIn(
+                                "usage-skip TASK-1 client=a reason=usage unknown", self.said()
+                            )
+                            self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
+                            self.assertFalse(fake.issues["TASK-1"].get("comments"))
+                        if dry:
+                            self.assertEqual(
+                                (fake.mutations, self.start.launches, self.state), ([], [], before)
+                            )
+                        else:
+                            self.assertEqual(
+                                [(item.issue, item.client) for item in self.start.launches],
+                                [("TASK-2", healthy)],
+                            )
+                        self.assertFalse(fake.issues["TASK-2"].get("comments"))
+
+    def test_resume_probe_failure_only_stops_tick_for_host_errors(self):
+        for dry in (False, True):
+            for host_failure in (False, True):
+                with self.subTest(dry=dry, host_failure=host_failure):
+                    self.lines = []
+                    message = (
+                        "agent-pm-opencode: keychain locked"
+                        if host_failure
+                        else "agent-pm-opencode: no API key"
+                    )
+                    error = SessionError(message) if host_failure else ConfigError(message)
+                    self.api.usages = {"a": error, "b": reading(10)}
+                    fake = self.fake(
+                        issue("TASK-1", "In Progress", "researcher", priority=1),
+                        issue("TASK-2", "Todo", "pm", priority=2),
+                    )
+                    self.resumable("TASK-1", "saved", 60)
+                    before = self.before()
+                    self.assertEqual(
+                        self.tick(fake, *(["--dry-run"] if dry else [])),
+                        2 if host_failure else 0,
+                    )
+                    self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
+                    self.assertFalse(fake.issues["TASK-1"].get("comments"))
+                    if host_failure:
+                        self.assertIn(message, self.err)
+                        self.assertNotIn("launch-error", self.err)
+                        self.assertEqual(self.api.usage_calls, ["a"])
+                    else:
+                        self.assertIn(
+                            "usage-skip TASK-1 client=a reason=usage unknown", self.said()
+                        )
+                        self.assertEqual(self.api.usage_calls, ["a", "b"])
+                    if dry or host_failure:
+                        self.assertEqual(
+                            (fake.mutations, self.start.launches, self.state), ([], [], before)
+                        )
+                    else:
+                        self.assertEqual(
+                            [(item.issue, item.client) for item in self.start.launches],
+                            [("TASK-2", "b")],
+                        )
+
+    def test_host_usage_failure_stops_tick_without_issue_writes(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        for dry in (False, True):
+            for selected in (False, True):
+                for reason in (
+                    "keychain locked",
+                    "credentials unreadable",
+                    "broker missing",
+                    "broker protocol mismatch",
+                    "broker timed out",
+                ):
+                    with self.subTest(dry=dry, selected=selected, reason=reason):
+                        self.lines = []
+                        client = "b" if selected else "a"
+                        labels = [label("Selected", AGENT_B, AGENT_GROUP)] if selected else []
+                        self.api.usages = {
+                            client: SessionError(f"secret-store agent-pm-provider: {reason}")
+                        }
+                        fake = self.fake(
+                            issue("TASK-1", "Todo", "researcher", priority=1, labels=labels),
+                            issue("TASK-2", "Todo", "pm", priority=2),
+                        )
+                        self.assertEqual(self.tick(fake, *(["--dry-run"] if dry else [])), 2)
+                        self.assertIn(reason, self.err)
+                        self.assertIn("agent-pm-provider", self.err)
+                        self.assertNotIn("launch-error", self.err)
+                        self.assertNotIn("would comment", self.err)
+                        self.assertEqual(self.api.usage_calls, [client])
+                        self.assertEqual(
+                            (fake.mutations, self.start.launches, self.state), ([], [], "")
+                        )
+                        for item in fake.issues.values():
+                            self.assertEqual(item["state"], "Todo")
+                            self.assertFalse(item.get("comments"))
 
     def test_label_client_configuration_rejection_is_visible_even_after_cached_default_error(self):
         self.write_config(

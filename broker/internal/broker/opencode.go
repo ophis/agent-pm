@@ -71,7 +71,7 @@ func opencodeError(provider string, err error) *protocol.Error {
 	case errors.Is(err, ErrNotFound):
 		return protocol.New(protocol.LoginRequired, "No API key for OpenCode provider "+provider+": run "+login+".")
 	case errors.Is(err, ErrNeedsDialog):
-		return protocol.New(protocol.LoginRequired, "The OpenCode provider "+provider+" API key needs keychain approval: unlock the login keychain, or run "+login+".")
+		return protocol.New(protocol.KeychainFailed, "The OpenCode provider "+provider+" API key needs keychain approval: unlock the login keychain, or run "+login+".")
 	}
 	return protocol.New(protocol.KeychainFailed, "Keychain access to the OpenCode provider "+provider+" API key failed.")
 }

@@ -40,7 +40,14 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.hosts.docker.broker import REFRESH, RELAY, BrokerError, client_keys
+from agent_pm.session.hosts.docker.broker import (
+    BROKER,
+    REFRESH,
+    RELAY,
+    Broker,
+    BrokerError,
+    client_keys,
+)
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.host import (
     KEPT_RETRY,
@@ -55,6 +62,7 @@ from agent_pm.session.viewer import display as displays
 from agent_pm.utils import Record, parse_time
 
 from session.tests.case import REPO, Case
+from session.tests.unit.hosts.docker.support import FakeBroker as BrokerRunner
 from session.tests.unit.hosts.docker.support import data
 from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
@@ -147,6 +155,8 @@ class FakeBroker:
 
     def probe_provider(self, provider, base_url):
         self.order.append(("probe", provider, base_url))
+        if "probe-provider" in self.failing:
+            raise self.failing["probe-provider"]
         return True
 
     def build(self, package, *, plugins=(), max_age=None):
@@ -302,13 +312,54 @@ def _free(path):
 
 
 class ConfigTest(Base):
+    def test_provider_usage_rejects_broker_18_before_probing_credentials(self):
+        request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+        locked = data("error-login_required.json")
+        locked["error"].update(
+            command="probe-provider", message="secret-store agent-pm-opencode: keychain locked"
+        )
+        runner = BrokerRunner(
+            (0, '{"protocol_version":"18"}\n', ""),
+            (5, "", json.dumps(locked)),
+        )
+        self.host.broker = Broker(runner)
+        with self.assertRaisesRegex(SessionError, "protocol '18', want '19'") as caught:
+            self.host._provider_usage(request)
+        self.assertIn(
+            "install or upgrade it: see docs/docker-host.md#install", str(caught.exception)
+        )
+        self.assertEqual(runner.calls, [[BROKER, "version"]])
+        self.assertEqual(len(runner.results), 1)
+
     def test_provider_usage_checks_protocol_and_uses_the_broker(self):
         request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
         self.assertTrue(self.host._provider_usage(request))
         self.assertEqual(self.order, ["version", ("probe", "strata", "https://strata.test/v1")])
         self.broker.failing["version"] = SessionError("upgrade broker")
-        with self.assertRaisesRegex(ConfigError, "upgrade broker"):
+        with self.assertRaisesRegex(SessionError, "upgrade broker"):
             self.host._provider_usage(request)
+
+    def test_provider_usage_preserves_host_credential_failures(self):
+        request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+        for exit_code, code, message in (
+            (11, "keychain_failed", "secret-store agent-pm-strata: keychain locked"),
+            (11, "keychain_failed", "secret-store agent-pm-strata: credentials unreadable"),
+        ):
+            with self.subTest(code=code):
+                error = BrokerError(exit_code, code, message, "not_needed", None)
+                self.broker.failing["probe-provider"] = error
+                with self.assertRaises(SessionError) as caught:
+                    self.host._provider_usage(request)
+                self.assertIs(caught.exception, error)
+
+    def test_provider_usage_reports_missing_or_invalid_key_as_client_configuration(self):
+        request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+        for message in ("No API key in agent-pm-opencode", "Invalid API key in agent-pm-opencode"):
+            with self.subTest(message=message):
+                error = BrokerError(5, "login_required", message, "not_needed", None)
+                self.broker.failing["probe-provider"] = error
+                with self.assertRaisesRegex(ConfigError, message):
+                    self.host._provider_usage(request)
 
     def test_the_packaged_table_parses_and_tmux_stays_the_default(self):
         with open(os.path.join(REPO, "session/src/agent_pm/session/config.toml"), "rb") as f:
