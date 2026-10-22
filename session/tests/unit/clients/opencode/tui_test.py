@@ -345,6 +345,62 @@ class EventsTest(Base):
             },
         )
 
+    def test_permission_asks_follow_the_selected_modes_auto_flag(self):
+        cases = [
+            (packaged_table(), permission, permission is Permission.YOLO)
+            for permission in Permission
+        ]
+        cases.extend(
+            (
+                {**packaged_table(), "modes": {"auto": ["--auto"], "yolo": []}},
+                permission,
+                permission is Permission.AUTO,
+            )
+            for permission in (Permission.AUTO, Permission.YOLO)
+        )
+        for table, permission, auto in cases:
+            for restored in (False, True):
+                with self.subTest(permission=permission, auto=auto, restored=restored):
+                    run = self.run_tui(
+                        OpenCodeClient(table), replace(LOCAL_CONTEXT, permission=permission)
+                    )
+                    if restored:
+                        run.restore(self.spec(), {"cwd": self.cwd, "store": run.common.store})
+                    else:
+                        run.launch(self.spec(), HOOK)
+                    self.assertEqual("permission.asked" in run.hooks, not auto)
+                    self.assertEqual(run.hooks["question.asked"], HookKind.BLOCKED)
+                    records = [
+                        ("permission.asked", {"session_id": SES, "permission": "custom_tool"}),
+                        ("permission.replied", {"session_id": SES, "reply": "once"}),
+                        ("question.asked", {"session_id": SES, "questions": ["Database"]}),
+                        ("question.replied", {"session_id": SES}),
+                        ("session.idle", {"session_id": SES, "last_assistant_message": "Done"}),
+                        ("session.error", {"session_id": SES, "error": "APIError"}),
+                    ]
+                    expected = [ClientBound(SES)]
+                    if not auto:
+                        expected.append(Blocked("custom_tool"))
+                    expected.extend(
+                        [
+                            Activity(""),
+                            Blocked("question: Database"),
+                            Activity(""),
+                            TurnEnd("Done"),
+                            TurnFailed("APIError", ""),
+                        ]
+                    )
+                    events = (
+                        run.replay(records)
+                        if restored
+                        else [
+                            event
+                            for label, payload in records
+                            for event in run.hook_events(label, payload)
+                        ]
+                    )
+                    self.assertEqual(events, expected)
+
     def test_events(self):
         run = self.run_tui()
         self.assertEqual(run.hook_events(tui.START, {"session_id": SES}), [ClientBound(SES)])

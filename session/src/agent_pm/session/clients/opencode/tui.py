@@ -69,12 +69,24 @@ class OpenCodeTui(Homed, Tui):
         self.cwd, self.sid, self.fresh = "", "", False
         self.opening = None
 
+    def _configure_hooks(self):
+        auto = "--auto" in self.common.modes[self._context.permission]
+        # Both the commander's hook state and replay use this mapping.
+        self.hooks = MappingProxyType(
+            {
+                label: kind
+                for label, kind in type(self).hooks.items()
+                if label != "permission.asked" or not auto
+            }
+        )
+
     def launch(self, spec: Spec, hook):
         context, common = self._context, self.common
         selection = common.selection(spec, context, TUI_RESERVED)
         mode = common.modes[context.permission]
         refuse(common.flags, TUI_RESERVED, "[clients.opencode] flags")
         refuse(mode, TUI_RESERVED, f"[clients.opencode.modes] {context.permission}")
+        self._configure_hooks()
         for where, env in (
             ("[clients.opencode] env", common.env),
             ("a run's env", {**spec.access.env, **spec.env}),
@@ -120,6 +132,7 @@ class OpenCodeTui(Homed, Tui):
     def restore(self, spec, state):
         if _paths(state) is None:
             raise ConfigError("opencode tui state: bad state")
+        self._configure_hooks()
         self.sid = spec.sid or ""
 
     def reply(self, payload):
