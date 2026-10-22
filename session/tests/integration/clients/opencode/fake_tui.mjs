@@ -1,7 +1,8 @@
 // A fake `opencode` TUI: loads the plugins its OPENCODE_CONFIG_CONTENT lists, as OpenCode 1.19.3
 // does, and plays FAKE_SCENARIO's turns ("turns", or "resume" for a --session start) as OpenCode bus
 // events to them. The first turn's text is --prompt's (a fresh start), the rest stdin lines. A step:
-// {text, late?: ms, child?, repeat?, synthetic?, ignored?} (late: saved after idle), {tool, permission?, pattern?},
+// {text, late?: ms, reads?, child?, repeat?, synthetic?, ignored?} (late: saved after idle;
+// reads: hidden for N API reads), {tool, permission?, pattern?},
 // {bash, child?} (backend ask emits permission.asked, then --auto replies or stdin "allow" does),
 // {question, child?} (asks, then waits for the stdin
 // line "answer" or "dismiss"), {error, recover?} (recovered: the turn goes on, as
@@ -50,12 +51,18 @@ log({
 });
 
 const messages = [];
+const hidden = new Map();
 const late = []; // [ms after the turn's idle, a message saved then]
 let held = null; // a lateUser turn's messages, saved together later
 function save(message) {
   (held ?? messages).push(message);
 }
-const client = { session: { messages: async () => ({ data: messages.map((m) => ({ ...m })) }) } };
+const client = { session: { messages: async () => ({ data: messages.filter((m) => {
+  const left = hidden.get(m.info.id) ?? 0;
+  if (!left) return true;
+  hidden.set(m.info.id, left - 1);
+  return false;
+}).sort((a, b) => Number(a.info.id.slice(4)) - Number(b.info.id.slice(4))) }) } };
 const modules = [];
 for (const url of config.plugin ?? []) modules.push(await import(url));
 let hooks = [];
@@ -111,6 +118,7 @@ async function step(item) {
     const text = { id: `prt_${++part}`, sessionID: session, type: "text", text: item.text,
       synthetic: item.synthetic, ignored: item.ignored };
     const message = assistant([text], session);
+    if (item.reads) hidden.set(message.info.id, item.reads);
     if (item.late) late.push([item.late, message]);
     else save(message);
     await emit("message.part.updated", { part: text });

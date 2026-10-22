@@ -387,6 +387,24 @@ class TuiSessions(Case):
                 handle.send("next")
             self.assertEqual(stream.until(TurnEnd), [Activity(""), Reply("same"), TurnEnd("same")])
 
+    def test_completed_messages_are_waited_for_when_other_text_is_already_saved(self):
+        self.scene(
+            [
+                [{"text": "early"}, {"text": "final", "reads": 6}],
+                [{"text": "middle", "reads": 6}, {"text": "last"}],
+            ]
+        )
+        handle, stream = self.start()
+        self.assertEqual(
+            stream.until(TurnEnd),
+            [Activity(""), Reply("early"), Reply("final"), TurnEnd("final")],
+        )
+        handle.send("next")
+        self.assertEqual(
+            stream.until(TurnEnd),
+            [Activity(""), Reply("middle"), Reply("last"), TurnEnd("last")],
+        )
+
     def test_a_resume_selects_the_session_and_sends_its_prompt(self):
         self.scene([[{"text": "first"}]], resume=[[{"text": "fixed"}]])
         handle, stream = self.start()

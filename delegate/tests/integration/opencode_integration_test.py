@@ -94,7 +94,7 @@ class OpenCodeTui(OpenCodeIntegration):
                 {"busy": True},
                 {"reinit": True},
                 {"text": "intermediate prose"},
-                {"text": final, "repeat": 2, "late": 500},
+                {"text": final, "repeat": 2, "reads": 8},
             ],
             "--mode",
             "tui",
