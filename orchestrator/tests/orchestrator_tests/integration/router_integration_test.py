@@ -386,7 +386,7 @@ class Gate(Flow):
         self.guard()
         self.scene([], usage=usage(0.5))
         res = subprocess.run(
-            ["sh", "-c", config.load().roles["researcher"].run.gate],
+            ["agent-pm-orchestrator", "router", "--brake", "researcher"],
             cwd=self.root,
             env={
                 **self.env(),

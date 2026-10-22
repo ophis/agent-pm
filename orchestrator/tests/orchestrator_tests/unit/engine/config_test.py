@@ -39,7 +39,6 @@ from orchestrator_tests.unit.board_ids import (
     role,
     workflow_line,
 )
-from orchestrator_tests.unit.config_fixtures import GATE
 
 from delegate.tests.fakes.delegate import FakeDelegate
 from utils.tests.case import local_section
@@ -629,6 +628,43 @@ class ConfigurationLoading(ConfigFile, Case):
             with self.subTest(message, text=text):
                 self.fails("orchestrator/config.toml: " + message, text)
 
+    def test_usage_limit(self):
+        for text, expected in (
+            (PIPELINE, {}),
+            (PIPELINE + "[usage_limit]\n", {}),
+            (PIPELINE + '[usage_limit]\na = "off"\nb = "on"\n', {"a": False, "b": True}),
+        ):
+            with self.subTest(expected=expected):
+                cfg = self.load(text)
+                self.assertEqual(cfg.usage_limit, expected)
+                with self.assertRaises(TypeError):
+                    cfg.usage_limit["new"] = False
+        self.local('[usage_limit]\na = "off"\n')
+        self.assertEqual(
+            self.load(PIPELINE + '[usage_limit]\na = "on"\nb = "on"\n').usage_limit,
+            {"a": False, "b": True},
+        )
+
+    def test_usage_limit_rejected(self):
+        self.fails(
+            'orchestrator/config.toml: usage_limit must be a table of <client> = "on" or "off"',
+            'usage_limit = "off"\n' + PIPELINE,
+        )
+        for value, shown in (
+            ('"OFF"', "'OFF'"),
+            ('""', "''"),
+            ("true", "True"),
+            ("false", "False"),
+            ("0", "0"),
+            ("[]", "[]"),
+            ("{}", "{}"),
+        ):
+            with self.subTest(value=value):
+                self.fails(
+                    f'orchestrator/config.toml: [usage_limit] a must be "on" or "off": {shown}',
+                    PIPELINE + f"[usage_limit]\na = {value}\n",
+                )
+
     def test_client_max_runs(self):
         for text, limits in (
             (PIPELINE, {}),
@@ -864,7 +900,7 @@ class CommittedConfiguration(Case):
         )
         self.assertIs(HARNESS_DELEGATE, delegate.HarnessDelegate)
 
-    def test_launchd_jobs_and_the_packaged_gate_run_agent_pm_orchestrator(self):
+    def test_launchd_jobs_run_agent_pm_orchestrator_and_core_has_no_gate(self):
         for job in ("router", "promote"):
             plist = os.path.join(REPO, "orchestrator", "launchd", f"com.ophis.agent-pm.{job}.plist")
             with open(plist, "rb") as f:
@@ -872,9 +908,12 @@ class CommittedConfiguration(Case):
             self.assertTrue(program.endswith("/bin/agent-pm-orchestrator"), program)
         with files("agent_pm.orchestrator").joinpath("config.toml").open("rb") as source:
             committed = tomllib.load(source)
+        self.assertEqual(committed["core"], {})
         self.assertEqual(
-            committed["core"]["roles"]["researcher"]["gate"],
-            "agent-pm-orchestrator router --brake researcher",
+            self.load(HEADER + role("researcher") + role("pm") + role("engineer"))
+            .roles["researcher"]
+            .run.gate,
+            "",
         )
 
     def setUp(self):
@@ -950,7 +989,7 @@ class CommittedConfiguration(Case):
         self.assertEqual(
             {r: (x.run.gate, x.run.task, x.run.language) for r, x in cfg.roles.items()},
             {
-                "researcher": (GATE, "", "Chinese"),
+                "researcher": ("", "", "Chinese"),
                 "pm": ("", "", "Chinese"),
                 "engineer": ("", "", "Chinese"),
             },
@@ -1634,13 +1673,12 @@ class ConfigurationRoot(ConfigFile, Case):
         cfg = self.load(
             PIPELINE
             + '[core]\ntier = 3\ncommands = ["env PYTHONPATH={{pythonpath}} python3 -P", "true"]\n'
-            + '[core.roles.researcher]\ngate = "python3 {{root}}/x"\n'
             + '[core.roles.pm]\nlanguage = "French"\n'
         )
         run = cfg.roles["researcher"].run
         self.assertEqual(
             (run.tier, run.commands, run.gate),
-            (3, ["env PYTHONPATH={{pythonpath}} python3 -P", "true"], "python3 {{root}}/x"),
+            (3, ["env PYTHONPATH={{pythonpath}} python3 -P", "true"], ""),
         )
         self.assertEqual((cfg.roles["pm"].run.gate, cfg.roles["pm"].run.language), ("", "French"))
 
@@ -1662,6 +1700,11 @@ class ConfigurationRoot(ConfigFile, Case):
         unknown = "core: run overlay: unknown key "
         cases = [
             ("[core]\nfoo = 1\n", unknown + "'foo' in [overlay]"),
+            ('[core]\ngate = "x"\n', unknown + "'gate' in [overlay]"),
+            (
+                '[core.roles.researcher]\ngate = "x"\n',
+                unknown + "'gate' in [overlay.roles.researcher]",
+            ),
             ('[core]\nusers = ["octocat"]\n', unknown + "'users' in [overlay]"),
             ('[core]\ntrusted_dirs = ["~/x"]\n', unknown + "'trusted_dirs' in [overlay]"),
             ("[core]\nworkers_per_column = 2\n", unknown + "'workers_per_column' in [overlay]"),
@@ -1726,7 +1769,7 @@ class ConfigurationRoot(ConfigFile, Case):
             (
                 CORE_TOML,
                 PIPELINE + '[core.roles.researcher]\ngate = "echo `id`"\n',
-                "core: gate must be one line of shell command without backticks",
+                "core: run overlay: unknown key 'gate' in [overlay.roles.researcher]",
             ),
         ]
         for core, text, message in cases:
