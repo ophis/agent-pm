@@ -196,7 +196,7 @@ Create the first issue with `agent-pm-orchestrator issue create --title "First i
 
 Unfinished `blocked_by` cycles (including an issue blocking itself) produce a `dependency-cycle` router diagnostic naming the closed path. Remove the cyclic links in those issue files. The same diagnostic is logged once per 24 hours; `router --dry-run` always shows it without writing. Missing blockers still block, and independent ready issues remain schedulable.
 
-An issue-selected client whose usage probe requires a missing or non-executable program produces `launch-error`, a repair comment and a move to `review/`. An executable client whose usage cannot be read still produces `usage unknown`. Fix the client choice or installation, then move the issue to `ready/`.
+An issue-selected client whose usage probe requires a missing or non-executable program produces `launch-error`, a repair comment and a move to `review/`; fix the client choice or installation, then move the issue to `ready/`. A probe that returns no reading produces `usage unknown`; a [host probe failure](#agent-label) stops the tick without bouncing the issue.
 
 ### Mac mini regression checks
 
