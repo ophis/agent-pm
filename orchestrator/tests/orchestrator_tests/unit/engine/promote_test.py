@@ -866,6 +866,7 @@ class LocalBoardPromotion(Base):
         self.assertEqual(self.run_main(), 0, self.err)
         self.assertEqual(self.files(), before)
         self.assertIn("handoff-wait LOC-1", self.out)
+        self.assertIn("reason=in approved/ under 10 min", self.out)
 
     def test_default_research_prefix_is_replaced_by_pm_prefix(self):
         self.approved()
@@ -945,7 +946,11 @@ PROMOTION = {  # one Handoff issue promoted
     "ops.M_STATE": 1,
     "ops.M_COMMENT": 1,
 }
-WAITING = {"linear_tracker.Q_HANDOFF": 1, "linear_tracker.Q_DETAIL": 1}  # TASK-1003 not yet due
+WAITING = {
+    "linear_tracker.Q_HANDOFF": 1,
+    "linear_tracker.Q_DETAIL": 1,
+    "linear_tracker.Q_STATE_NAME": 1,
+}  # TASK-1003 not yet due
 
 
 class RequestCountTest(HostScale):
@@ -956,7 +961,7 @@ class RequestCountTest(HostScale):
         expected = {
             "cold": {
                 "setup": SETUP_REQUESTS,
-                "promote": {"linear_tracker.Q_HANDOFF": 1, **two},
+                "promote": {"linear_tracker.Q_HANDOFF": 1, "linear_tracker.Q_STATE_NAME": 1, **two},
                 "prune": {
                     "linear_tracker.Q_SNAPSHOTS": 6,
                     "linear_tracker.Q_ISSUE": 2,
@@ -1003,5 +1008,5 @@ class RequestCountTest(HostScale):
         self.assertLessEqual(max(sum(r["prune"].values()) for r in found.values()), cap)
         self.assertEqual(
             {name: sum(sum(p.values()) for p in r.values()) for name, r in found.items()},
-            {"cold": 45, "warm": 11, "quiet": 5, "next_day": 28},
+            {"cold": 46, "warm": 12, "quiet": 6, "next_day": 28},
         )

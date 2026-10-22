@@ -133,7 +133,10 @@ class Promoter:
                     "handoff-wait",
                     src.ident,
                     once=True,
-                    reason=f"in Handoff under {MATURE.seconds // 60} min",
+                    reason=(
+                        f"in {self.tracker.state_name(IssueState.APPROVED)} "
+                        f"under {MATURE.seconds // 60} min"
+                    ),
                 )
                 continue
             try:

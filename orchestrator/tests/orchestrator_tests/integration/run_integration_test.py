@@ -237,6 +237,7 @@ class Done(Run):
                 "url": PRD,
             },
             [
+                ("sessions.Q_STATE_NAME", {"i": STATES["handoff"]}),
                 READ,
                 ("writeback.M_TITLE", {"i": UUID, "t": "PRD: Session Registry"}),
                 SUBSCRIBE,

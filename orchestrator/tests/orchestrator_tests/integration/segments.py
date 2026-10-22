@@ -55,7 +55,10 @@ SESSION = re.compile(r"(running|done|failed|needs_input|interrupted|limit|no out
 
 FIRST_WRITE = ("sessions.M_UPDATE", HARNESS_EMAIL, "error")
 
-HARNESS_TEXTS = {routing.CAP_COMMENT: "cap", routing.INTERRUPTED: "interrupted"}
+HARNESS_TEXTS = {
+    routing.CAP_COMMENT: "cap",
+    routing.INTERRUPTED.format(state="Todo"): "interrupted",
+}
 
 RESEARCH = (
     "Session registries in agent harnesses",
