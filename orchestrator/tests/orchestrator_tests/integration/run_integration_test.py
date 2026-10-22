@@ -265,7 +265,10 @@ class Done(Run):
             [
                 READ,
                 SUBSCRIBE,
-                post("comment", "Build ready:\nAdds the registry.\nVerify: python3 -m unittest"),
+                post(
+                    "comment",
+                    "Build ready:\nAgent report before delivery:\n\n> Adds the registry.\n> Verify: python3 -m unittest",
+                ),
                 attach(PR, title),
                 REREAD,
                 TO_REVIEW,

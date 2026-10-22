@@ -64,7 +64,11 @@ class MinimalPath(BinFlow):
         self.assertRegex(session, rf"^Run {sid} · done · .* · exit 0\n")
         engineer = ACCOUNTS["engineer"]
         self.assertEqual(
-            rest, [(engineer, f"Build started: {STARTED}"), (engineer, f"Build ready: {READY}")]
+            rest,
+            [
+                (engineer, f"Build started: {STARTED}"),
+                (engineer, f"Build ready:\nAgent report before delivery:\n\n> {READY}"),
+            ],
         )
         self.assertEqual(
             self.ledger(ID),

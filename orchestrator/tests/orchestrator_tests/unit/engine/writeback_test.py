@@ -744,7 +744,12 @@ class CompletionSteps(Base):
                 ctx, Outcome(status="done", title="ENG-7: x", summary="Ready.", url=PR)
             )
         )
-        self.assertEqual(gql.calls, expect(body="Build ready: Ready.", state="in_review"))
+        self.assertEqual(
+            gql.calls,
+            expect(
+                body="Build ready:\nAgent report before delivery:\n\n> Ready.", state="in_review"
+            ),
+        )
         self.assertIn(f"attach:{PR}", self.steps(ctx)[SID])
 
     def test_already_linked_errors_count_as_attached(self):
@@ -847,7 +852,7 @@ class CompletionSteps(Base):
                 ),
             )
         )
-        body = "Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: LinearError: linear api error: body too long"
+        body = "Build ready:\nAgent report before delivery:\n\n> Ready.\n\nCould not post the Spec `ENG-7-spec.md`: LinearError: linear api error: body too long"
         self.assertEqual(
             gql.calls,
             expect(
@@ -954,7 +959,10 @@ class EngineeringUrls(Base):
                 "other repo dropped",
                 TARGET,
                 Outcome(status="done", title="ENG-7: x", summary="Ready.", url=evil),
-                expect(body="Build ready: Ready.", state="in_review"),
+                expect(
+                    body="Build ready:\nAgent report before delivery:\n\n> Ready.",
+                    state="in_review",
+                ),
                 f"skip {ID} reason=url not on ophis/agent-pm",
             ),
             (
@@ -962,7 +970,7 @@ class EngineeringUrls(Base):
                 ("Ophis", "Agent-PM"),
                 Outcome(status="done", title="ENG-7: x", summary="Ready.", url=PR),
                 expect(
-                    body="Build ready: Ready.",
+                    body="Build ready:\nAgent report before delivery:\n\n> Ready.",
                     state="in_review",
                     attach=PR,
                     attach_title="ENG-7: x",
@@ -1043,6 +1051,18 @@ class ApprovalMessages(Base):
 
 
 class CompletionMessages(Base):
+    def test_build_summary_is_an_earlier_report_not_the_current_pr_state(self):
+        outcome = Outcome("done", "Fix", "PR #9 is a draft.\n\nChecks pending.", url=PR)
+        body, state, url = writeback._completion_body(self.ctx(), outcome)
+        self.assertEqual(
+            body,
+            "Build ready:\nAgent report before delivery:\n\n"
+            "> PR #9 is a draft.\n> \n> Checks pending.",
+        )
+        self.assertEqual((state, url), ("in_review", PR))
+        body, _, _ = writeback._completion_body(self.ctx(), replace(outcome, summary=""))
+        self.assertEqual(body, "Build ready")
+
     def outcomes(self, role, spec, plan):
         kind, files = config.TASKS[role].input, [plan, spec]
         if kind == "research":
@@ -1160,7 +1180,7 @@ class CompletionMessages(Base):
                 resume=resume,
                 files=files,
                 state="in_review",
-                body="Build ready:\nAdds the registry.\nVerify: python3 -m unittest",
+                body="Build ready:\nAgent report before delivery:\n\n> Adds the registry.\n> Verify: python3 -m unittest",
                 attach=PR,
                 attach_title="ENG-7: Session registry",
             ),
@@ -1309,7 +1329,10 @@ class CompletionLedger(Base):
             status="done", title="ENG-7: x", summary="Ready.", url=PR, files=list([spec, plan])
         )
         self.assertFalse(writeback.finish(ctx, done))
-        self.assertEqual(broken.calls[-1], post("comment", "Build ready: Ready."))
+        self.assertEqual(
+            broken.calls[-1],
+            post("comment", "Build ready:\nAgent report before delivery:\n\n> Ready."),
+        )
         self.assertEqual(
             self.lines()[-1],
             f"step-error {ID} step=comment error=LinearError: commentCreate: success: false",
@@ -1319,7 +1342,10 @@ class CompletionLedger(Base):
         self.assertEqual(
             again.calls,
             expect(
-                body="Build ready: Ready.", state="in_review", attach=PR, attach_title="ENG-7: x"
+                body="Build ready:\nAgent report before delivery:\n\n> Ready.",
+                state="in_review",
+                attach=PR,
+                attach_title="ENG-7: x",
             ),
         )
 
@@ -2021,7 +2047,11 @@ class FinishedEvents(Events):
                 (
                     CLAIM_KEY,
                     "comment",
-                    {"c": ops.client_id(RUN_SID, "comment"), "i": UUID, "b": "Build ready: Ready."},
+                    {
+                        "c": ops.client_id(RUN_SID, "comment"),
+                        "i": UUID,
+                        "b": "Build ready:\nAgent report before delivery:\n\n> Ready.",
+                    },
                 ),
                 (CLAIM_KEY, "attach", {"i": UUID, "u": PR, "t": "TASK-1: x"}),
                 (CLAIM_KEY, "reread", {"i": UUID}),
@@ -2202,7 +2232,8 @@ class FinishedEvents(Events):
         self.linear.fail = lambda _op, _v: None
         self.assertTrue(self.deliver(self.finished(outcome=outcome_data(), attempt=2)))
         self.assertEqual(
-            self.linear.comments[ops.client_id(RUN_SID, "comment")]["body"], "Build ready: Ready."
+            self.linear.comments[ops.client_id(RUN_SID, "comment")]["body"],
+            "Build ready:\nAgent report before delivery:\n\n> Ready.",
         )
         self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
         self.assertEqual(
@@ -2213,7 +2244,8 @@ class FinishedEvents(Events):
     def test_a_failed_turn_with_a_limit_or_an_outcome_is_not_rewritten(self):
         self.assertTrue(self.deliver(self.finished(1, error=TURN_FAILED, outcome=outcome_data())))
         self.assertEqual(
-            self.linear.comments[ops.client_id(RUN_SID, "comment")]["body"], "Build ready: Ready."
+            self.linear.comments[ops.client_id(RUN_SID, "comment")]["body"],
+            "Build ready:\nAgent report before delivery:\n\n> Ready.",
         )
         self.assertNotIn(ops.client_id(RUN_SID, "no-outcome:1:comment"), self.linear.comments)
 

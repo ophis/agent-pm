@@ -342,6 +342,10 @@ def _completion_body(ctx, o):
     task, url = TASKS[ctx.role], _url(ctx, o.url)
     if o.status == OutcomeStatus.DONE:
         lead, text, state = task.done, o.summary, "in_review"
+        if task.input == "build" and text:
+            text = "Agent report before delivery:\n\n" + "\n".join(
+                f"> {line}" for line in text.splitlines()
+            )
     elif o.status == OutcomeStatus.NEEDS_INPUT:
         questions = "\n".join(f"{n}. {q}" for n, q in enumerate(o.questions, 1))
         footer = FOOTER.format(state=ctx.tracker.state_name(IssueState.READY))
