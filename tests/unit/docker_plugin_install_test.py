@@ -100,7 +100,7 @@ class PluginInstall(Case):
                     self.calls = []
                     reads = 0
 
-                    def wrong_revision(argv, **kw):
+                    def wrong_revision(argv, *, client=client, drift=drift, **kw):
                         nonlocal reads
                         result = self.client_run(argv, **kw)
                         if (

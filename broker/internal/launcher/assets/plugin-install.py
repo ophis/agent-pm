@@ -71,7 +71,7 @@ def marketplace(checkout, names):
     return market
 
 
-def prepare(repo, commit, names, homes, markets, env):
+def prepare(repo, commit, names, homes, *, markets, env):
     sources, market = {}, None
     for client, home in homes.items():
         checkout = home / "sources" / repo
@@ -151,7 +151,7 @@ def install(plugins, root):
         name, repo, expected = plugin["name"], plugin["repo"], plugin["commit"]
         if repo not in prepared:
             names = [item["name"] for item in plugins if item["repo"] == repo]
-            prepared[repo] = prepare(repo, expected, names, homes, markets, env)
+            prepared[repo] = prepare(repo, expected, names, homes, markets=markets, env=env)
         market, sources = prepared[repo]
         identifier = f"{name}@{market}"
         for client, verb, home in (("claude", "install", claude), ("codex", "add", codex)):
