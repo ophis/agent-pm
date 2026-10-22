@@ -36,6 +36,7 @@ TOP_KEYS = {
     "workflow",
     "task_tiers",
     "client_max_runs",
+    "usage_limit",
     "roles",
     "local_clones",
     "core",
@@ -232,7 +233,8 @@ def _load(cfg, work, kind, delegates, index, *, board):
     roles = _runnable(cfg, work, delegates[kind], index)
     docs = _docs(roles, LOCAL)
     frozen = {
-        k: MappingProxyType(dict(cfg[k])) for k in ("task_tiers", "client_max_runs", "local_clones")
+        k: MappingProxyType(dict(cfg[k]))
+        for k in ("task_tiers", "client_max_runs", "usage_limit", "local_clones")
     }
     return Config(
         roles=MappingProxyType(roles),
@@ -245,6 +247,7 @@ def _load(cfg, work, kind, delegates, index, *, board):
         stages=MappingProxyType(_stage_order()),
         task_tiers=frozen["task_tiers"],
         client_max_runs=frozen["client_max_runs"],
+        usage_limit=frozen["usage_limit"],
         local_clones=frozen["local_clones"],
         delegate_kind=kind,
         delegates=MappingProxyType(delegates),
@@ -349,6 +352,7 @@ def _load_config(cfg, local, board):
     _work_dir(cfg, cfg["local_clones"], board=board)
     _task_tiers(cfg)
     _client_max_runs(cfg)
+    _usage_limit(cfg)
 
 
 def _linear(cfg, local):
@@ -554,6 +558,20 @@ def _agent_labels(linear):
         seen[v] = k
 
 
+def _usage_limit(cfg):
+    switches = cfg.setdefault("usage_limit", {})
+    if not isinstance(switches, dict):
+        raise ConfigError(
+            'orchestrator/config.toml: usage_limit must be a table of <client> = "on" or "off"'
+        )
+    for client, value in switches.items():
+        if value not in ("on", "off"):
+            raise ConfigError(
+                f'orchestrator/config.toml: [usage_limit] {client} must be "on" or "off": {value!r}'
+            )
+        switches[client] = value == "on"
+
+
 def _client_max_runs(cfg):
     limits = cfg.setdefault("client_max_runs", {})
     if not isinstance(limits, dict):
@@ -568,6 +586,13 @@ def _client_max_runs(cfg):
 
 
 def _runnable(cfg, work, delegate_cls, index):
+    overlay = cfg.get("core", {})
+    tables = {"overlay": overlay}
+    if isinstance(overlay, dict) and isinstance(roles := overlay.get("roles", {}), dict):
+        tables.update({f"overlay.roles.{role}": table for role, table in roles.items()})
+    for where, table in tables.items():
+        if isinstance(table, dict) and "gate" in table:
+            raise ConfigError(f"core: run overlay: unknown key 'gate' in [{where}]")
     try:
         trusted = delegate_cls.trusted_dirs()
     except (OSError, ValueError, delegate.ConfigError) as e:
@@ -575,7 +600,7 @@ def _runnable(cfg, work, delegate_cls, index):
     for d in sorted(trusted):
         if under(work, [d]):
             raise ConfigError(f"core: trusted_dirs: {d} is or contains work_dir {work}")
-    out = _resolve_roles(cfg, cfg.get("core", {}), delegate_cls, index)
+    out = _resolve_roles(cfg, overlay, delegate_cls, index)
     _runnable_inputs(cfg, out)
     return out
 

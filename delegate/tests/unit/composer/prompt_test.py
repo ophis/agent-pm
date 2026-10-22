@@ -586,7 +586,8 @@ class Parameters(Fake):
         self.write({"tasks/short-note.md": "# Short Note\n\nRun `<gate>` first.\n"})
         self.assertEqual(parameters(self.compose()[0])["<gate>"], "`none`")
         self.assertEqual(
-            parameters(self.compose(overlays=[{"gate": "make gate"}])[0])["<gate>"], "`make gate`"
+            parameters(self.compose(overlays=[{"gate": "owner brake"}])[0])["<gate>"],
+            "`owner brake`",
         )
         self.assertNotIn("<gate>", parameters(self.compose("editor")[0]))
 
@@ -1032,14 +1033,11 @@ class Real(RealConfig):
                 self.assertNotIn(root, prompt.replace(TEAM, "<team>"), (role, task))
             self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
 
-    def test_every_researcher_run_names_the_gate_default_none(self):
-        gate = "python3 /u/usage.py --below 80"
+    def test_standalone_researcher_keeps_no_brake(self):
         for task in (None, "deep-research", "research", "light-research"):
             prompt = composed("researcher", task)[0]
             self.assertIn("the gate is `<gate>`", prompt, task)
             self.assertEqual(parameters(prompt)["<gate>"], "`none`", task)
-            prompt = composed("researcher", task, overlays=[{"gate": gate}])[0]
-            self.assertEqual(parameters(prompt)["<gate>"], f"`{gate}`", task)
 
     def test_github_host_defaults_and_overrides(self):
         prompt, run = composed("researcher")

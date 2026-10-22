@@ -572,7 +572,7 @@ class UsageTest(Case):
                     "providers": {"strata": {"base_url": "https://strata.test/v1", "models": []}},
                 }
             )
-            with self.subTest(model=model), mock.patch.dict(os.environ, {"AGENT_PM_TIER": "1"}):
+            with self.subTest(model=model):
                 request = client._provider_probe()
                 if model.startswith("strata/"):
                     assert request is not None
