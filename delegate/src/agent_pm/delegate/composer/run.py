@@ -109,11 +109,7 @@ def resolve(
         raise misnamed_error(team, "tasks", task) or ConfigError(
             f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
         )
-    return replace(
-        run,
-        role_title=title_of(*found),
-        gate="agent-pm-orchestrator router --brake researcher" if role == "researcher" else "",
-    )
+    return replace(run, role_title=title_of(*found))
 
 
 def accounts(

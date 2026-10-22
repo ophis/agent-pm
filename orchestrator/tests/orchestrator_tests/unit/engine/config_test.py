@@ -39,7 +39,6 @@ from orchestrator_tests.unit.board_ids import (
     role,
     workflow_line,
 )
-from orchestrator_tests.unit.config_fixtures import GATE
 
 from delegate.tests.fakes.delegate import FakeDelegate
 from utils.tests.case import local_section
@@ -901,7 +900,7 @@ class CommittedConfiguration(Case):
         )
         self.assertIs(HARNESS_DELEGATE, delegate.HarnessDelegate)
 
-    def test_launchd_jobs_and_the_packaged_gate_run_agent_pm_orchestrator(self):
+    def test_launchd_jobs_run_agent_pm_orchestrator_and_core_has_no_gate(self):
         for job in ("router", "promote"):
             plist = os.path.join(REPO, "orchestrator", "launchd", f"com.ophis.agent-pm.{job}.plist")
             with open(plist, "rb") as f:
@@ -914,7 +913,7 @@ class CommittedConfiguration(Case):
             self.load(HEADER + role("researcher") + role("pm") + role("engineer"))
             .roles["researcher"]
             .run.gate,
-            GATE,
+            "",
         )
 
     def setUp(self):
@@ -990,7 +989,7 @@ class CommittedConfiguration(Case):
         self.assertEqual(
             {r: (x.run.gate, x.run.task, x.run.language) for r, x in cfg.roles.items()},
             {
-                "researcher": (GATE, "", "Chinese"),
+                "researcher": ("", "", "Chinese"),
                 "pm": ("", "", "Chinese"),
                 "engineer": ("", "", "Chinese"),
             },
@@ -1679,7 +1678,7 @@ class ConfigurationRoot(ConfigFile, Case):
         run = cfg.roles["researcher"].run
         self.assertEqual(
             (run.tier, run.commands, run.gate),
-            (3, ["env PYTHONPATH={{pythonpath}} python3 -P", "true"], GATE),
+            (3, ["env PYTHONPATH={{pythonpath}} python3 -P", "true"], ""),
         )
         self.assertEqual((cfg.roles["pm"].run.gate, cfg.roles["pm"].run.language), ("", "French"))
 
@@ -1695,7 +1694,7 @@ class ConfigurationRoot(ConfigFile, Case):
         self.assertEqual(self.load(text).work_dir, work)
 
     def test_no_core_table(self):
-        self.assertEqual(self.load(PIPELINE).roles["researcher"].run.gate, GATE)
+        self.assertEqual(self.load(PIPELINE).roles["researcher"].run.gate, "")
 
     def test_unknown_overlay_keys_roles_and_output_keys(self):
         unknown = "core: run overlay: unknown key "

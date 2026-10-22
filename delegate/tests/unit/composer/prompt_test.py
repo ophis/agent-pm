@@ -1031,14 +1031,13 @@ class Real(RealConfig):
                 self.assertNotIn(root, prompt.replace(TEAM, "<team>"), (role, task))
             self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
 
-    def test_every_researcher_run_uses_the_fixed_orchestrator_brake(self):
-        gate = "agent-pm-orchestrator router --brake researcher"
+    def test_standalone_researcher_keeps_no_brake_and_rejects_gate_config(self):
         for task in (None, "deep-research", "research", "light-research"):
             prompt = composed("researcher", task)[0]
             self.assertIn("the gate is `<gate>`", prompt, task)
-            self.assertEqual(parameters(prompt)["<gate>"], f"`{gate}`", task)
+            self.assertEqual(parameters(prompt)["<gate>"], "`none`", task)
             with self.assertRaisesRegex(ConfigError, "unknown key 'gate'"):
-                composed("researcher", task, overlays=[{"gate": gate}])
+                composed("researcher", task, overlays=[{"gate": "make gate"}])
 
     def test_github_host_defaults_and_overrides(self):
         prompt, run = composed("researcher")

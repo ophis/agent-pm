@@ -57,6 +57,43 @@ ORPHAN = 4242
 
 
 class CreateTest(HarnessCase):
+    def test_resumed_orchestrated_researcher_keeps_brake(self):
+        command = "agent-pm-orchestrator router --brake researcher"
+        record = self.make(
+            role="researcher",
+            spec=Spec("input", self.work, client="fake", sid=SID),
+            callback=("agent-pm-orchestrator", "writeback"),
+        ).detach()
+        self.stop(record)
+        resumed = HarnessDelegate.attach(self.work, session_cls=HarnessSession).resume()
+        self.assertEqual(self.metadata()["plan"]["run"]["gate"], command)
+        self.assertIn(command, self.metadata()["plan"]["session"]["access"]["commands"])
+        self.stop(resumed)
+
+    def test_only_orchestrated_researcher_runs_get_the_fixed_brake(self):
+        command = "agent-pm-orchestrator router --brake researcher"
+        for role, callback, expected in (
+            ("researcher", None, ""),
+            ("researcher", (), ""),
+            ("researcher", ("other-callback",), ""),
+            ("researcher", ("other-callback", "writeback"), ""),
+            ("researcher", ("agent-pm-orchestrator", "status"), ""),
+            ("researcher", ("agent-pm-orchestrator", "writeback"), command),
+            ("researcher", ("/opt/agent-pm/bin/agent-pm-orchestrator", "writeback"), command),
+            ("dummy-tester", ("agent-pm-orchestrator", "writeback"), ""),
+        ):
+            with self.subTest(role=role, callback=callback):
+                preview = HarnessDelegate.preview(
+                    role,
+                    Spec("input", self.work, client="fake", sid=SID),
+                    callback=callback,
+                    session_cls=HarnessSession,
+                )
+                self.assertEqual(preview.plan.run.gate, expected)
+                self.assertEqual(command in preview.plan.session.access.commands, bool(expected))
+                if expected:
+                    self.assertIn(f"`{command}`", preview.plan.session.prompt)
+
     def test_create_persists_placement_with_overlays(self):
         class Bound(HarnessDelegate):
             def __init__(self, role, spec, **placement):
