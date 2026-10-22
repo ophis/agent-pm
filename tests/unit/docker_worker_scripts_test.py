@@ -13,6 +13,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from agent_pm.session.clients.opencode.common import HOME
+
 from tests.case import REPO, Case
 
 ASSETS = Path(REPO, "broker/internal/launcher/assets")
@@ -1249,6 +1251,15 @@ class OpencodeInstall(Case):
         for argv in ([], ["arm64"], ["arm64", "relative"], ["arm64", "/p", "extra"]):
             with self.subTest(argv=argv), self.assertRaises(SystemExit):
                 self.ns["main"](argv)
+
+    def test_the_pinned_opencode_still_needs_the_window_floor(self):
+        self.assertEqual(
+            (self.ns["VERSION"], HOME.min_width),
+            ("1.19.3", 40),
+            "see HOME in clients/opencode/common.py: keep min_width while the broker's "
+            "opencodeMinVersion (broker/internal/launcher/versions.go) bundles @opentui/core "
+            "older than 0.5.3, then update this pin",
+        )
 
 
 class ImageLayer(Case):
