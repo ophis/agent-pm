@@ -399,7 +399,17 @@ class InstallTest(Case):
             for name, text in texts.items():
                 self.assertNotIn(secret, text, name)
 
-    def fresh(self, *args, clients="", docker="n", opencode=(), logins=None, ctty=None, then=()):
+    def fresh(
+        self,
+        *args,
+        clients="",
+        docker="n",
+        opencode=(),
+        logins=None,
+        ctty=None,
+        then=(),
+        provider_write=True,
+    ):
         """A first run answering every question: brew profile line, clients, Docker, the
         OpenCode provider, the config, the Docker logins, the PATH line, then `then` (the board's).
         """
@@ -419,7 +429,16 @@ class InstallTest(Case):
             want = (*want, *(("board",) if "--board" in args else ()))
             answers.append((MENU_Q, menu(want, have)))
         plugin = [(WRITE_Q, "y")] if "opencode" in (chosen or "") else []
-        answers += [*opencode, (WRITE_Q, "y"), *plugin, *(logins or ()), (WRITE_Q, "y"), *then]
+        provider = plugin if provider_write else []
+        answers += [
+            *opencode,
+            (WRITE_Q, "y"),
+            *plugin,
+            *provider,
+            *(logins or ()),
+            (WRITE_Q, "y"),
+            *then,
+        ]
         return self.run_install(*args, answers=answers, ctty=ctty)
 
     def again(self, *args, answers=()):
@@ -1140,7 +1159,7 @@ class InstallTest(Case):
         result = self.run_install(
             *flags,
             stdin=KEY + "\n",
-            answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 4],
+            answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 5],
         )
         self.assert_ok(result)
         exe = f"{self.agent_pm}/opencode/bin/opencode"
@@ -1211,6 +1230,7 @@ class InstallTest(Case):
                 (MODEL_Q, "m"),
                 (CONTEXT_Q, "0"),
                 (CONTEXT_Q, ""),
+                (WRITE_Q, "y"),
                 (WRITE_Q, "y"),
                 (WRITE_Q, "y"),
                 (OPENCODE_LOGIN_Q, "lan"),
@@ -1334,12 +1354,15 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertIn("1.19.3", (self.fakes / "opencode_version").read_text())
 
-    def opencode_only(self):
+    def opencode_only(self, provider_answer="y"):
         flags = ("--clients", "opencode", "--no-docker", "--opencode-provider", "lan")
         flags += ("--opencode-url", "http://localhost:8080/v1", "--opencode-model", "m")
         flags += ("--opencode-context", "65536", "--opencode-key-stdin")
+        provider = [(WRITE_Q, provider_answer)] if provider_answer is not None else []
         return self.run_install(
-            *flags, stdin=KEY + "\n", answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 4]
+            *flags,
+            stdin=KEY + "\n",
+            answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 3, *provider, (WRITE_Q, "y")],
         )
 
     def opencode_rerun(self, *answers):
@@ -1470,7 +1493,7 @@ class InstallTest(Case):
         self.assert_ok(self.opencode_only())
         Path(self.home, ".config/opencode/opencode.jsonc").write_text('{"plugin": []}')
         (self.fakes / "commit").write_text(NEW)
-        result = self.opencode_rerun((WRITE_Q, "n"))
+        result = self.opencode_rerun((WRITE_Q, "n"), (WRITE_Q, "n"))
         self.assert_ok(result)
         self.assertIn("==> OpenCode plugin\n    skip: declined\n", result.stderr)
         self.assertNotIn("opencode plugin", "\n".join(self.calls()))
@@ -1523,6 +1546,40 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertEqual(self.snapshot(), before)
 
+    def test_opencode_existing_global_provider_is_not_owned(self):
+        path = Path(self.home, ".config/opencode/opencode.jsonc")
+        path.parent.mkdir(parents=True)
+        original = '{"provider":{"lan":{"name":"user-defined"}},"theme":"mine"}'
+        path.write_text(original)
+        self.assert_ok(self.opencode_only(provider_answer=None))
+        self.assertEqual(json.loads(path.read_text())["provider"]["lan"], {"name": "user-defined"})
+        self.assertNotIn(f"opencode-provider\t{path}\tlan", self.ledger())
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(path.read_text(), original)
+
+    def test_opencode_provider_declined_then_rerun(self):
+        path = Path(self.home, ".config/opencode/opencode.jsonc")
+        self.assert_ok(self.opencode_only(provider_answer="n"))
+        self.assertNotIn("provider", json.loads(path.read_text()))
+        self.assertNotIn(f"opencode-provider\t{path}\tlan", self.ledger())
+        self.assert_ok(self.opencode_rerun((WRITE_Q, "y")))
+        self.assertIn("lan", json.loads(path.read_text())["provider"])
+        self.assertIn(f"opencode-provider\t{path}\tlan", self.ledger())
+
+    def test_opencode_cleanup_keeps_later_user_config(self):
+        self.assert_ok(self.opencode_only())
+        path = Path(self.home, ".config/opencode/opencode.jsonc")
+        data = json.loads(path.read_text())
+        data["theme"] = "mine"
+        data["provider"]["user"] = {"name": "mine"}
+        data["plugin"].append("user-plugin")
+        path.write_text(json.dumps(data))
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(
+            json.loads(path.read_text()),
+            {"theme": "mine", "provider": {"user": {"name": "mine"}}, "plugin": ["user-plugin"]},
+        )
+
     def test_opencode_key_from_stdin(self):
         self.auth_json().parent.mkdir(parents=True)
         self.auth_json().write_text('{"other": {"type": "api", "key": "theirs"}}')
@@ -1533,7 +1590,7 @@ class InstallTest(Case):
             "--clients",
             "codex,opencode",
             stdin=f"{PASSWORD}\n{KEY}\n",
-            answers=[(WRITE_Q, "y"), *PROVIDER_ANSWERS, *[(WRITE_Q, "y")] * 3],
+            answers=[(WRITE_Q, "y"), *PROVIDER_ANSWERS, *[(WRITE_Q, "y")] * 4],
         )
         self.assert_ok(result)
         data = json.loads(self.auth_json().read_text())
@@ -1578,6 +1635,12 @@ class InstallTest(Case):
         )
         self.assertEqual(json.loads(self.auth_json().read_text())["lan"]["key"], KEY)
         self.assertEqual((self.fakes / "keychain/agent-pm-opencode").read_text(), KEY)
+        global_config = Path(self.home, ".config/opencode/opencode.jsonc")
+        global_before = global_config.read_bytes()
+        value = json.loads(global_before)["provider"]["lan"]
+        self.assertEqual(value["npm"], "@ai-sdk/openai-compatible")
+        self.assertEqual(value["options"]["baseURL"], "http://10.0.0.5:8080/v1")
+        self.assertEqual(value["models"]["m1"]["limit"]["context"], 204800)
         self.assertEqual(self.auth_json().stat().st_mode & 0o777, 0o600)
         self.assertNotIn(KEY, result.tty)
         self.assertTrue(self.state()["login_opencode"].endswith(" lan"))
@@ -1585,6 +1648,7 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertNotIn(login, self.calls())
         self.assertNotIn("opencode auth login", self.calls())
+        self.assertEqual(global_config.read_bytes(), global_before)
         self.assert_secret_free(KEY, TOKEN, result=result)
         (self.fakes / "keychain/agent-pm-opencode").unlink()
         self.assert_ok(self.again())
@@ -1648,6 +1712,7 @@ class InstallTest(Case):
             answers=[
                 (WRITE_Q, "y"),
                 *PROVIDER_ANSWERS,
+                (WRITE_Q, "y"),
                 (WRITE_Q, "y"),
                 (WRITE_Q, "y"),
                 (PEM_Q, ""),
