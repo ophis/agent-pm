@@ -1591,6 +1591,46 @@ class InstallTest(Case):
         self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
         self.assertEqual(path.read_text(), original)
 
+    def test_opencode_install_accepts_bom_and_duplicate_keys(self):
+        path = Path(self.home, ".config/opencode/opencode.jsonc")
+        path.parent.mkdir(parents=True)
+        for original in ('\ufeff{"theme":"mine"}', '{"theme":"first","theme":"mine"}'):
+            with self.subTest(original=original):
+                path.write_text(original)
+                self.assert_ok(self.opencode_only())
+                data = json.loads(path.read_text().lstrip("\ufeff"))
+                self.assertEqual(data["theme"], "mine")
+                self.assertIn("lan", data["provider"])
+                self.assertIn(SPEC, data["plugin"])
+                self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+                self.assertEqual(path.read_text(), original)
+
+    def test_opencode_install_and_cleanup_preserve_config_symlinks(self):
+        conf = Path(self.home, ".config/opencode")
+        conf.mkdir(parents=True)
+        for filename in ("opencode.json", "opencode.jsonc"):
+            with self.subTest(filename=filename):
+                target = Path(self.home, "dotfiles", filename)
+                target.parent.mkdir(exist_ok=True)
+                original = '{"theme":"mine","provider":{"user":{"name":"mine"}}}'
+                target.write_text(original)
+                path = conf / filename
+                path.symlink_to(target)
+                self.assert_ok(self.opencode_only())
+                self.assertTrue(path.is_symlink())
+                self.assertEqual(path.resolve(), target)
+                installed = json.loads(target.read_text())
+                self.assertIn("lan", installed["provider"])
+                self.assertIn(SPEC, installed["plugin"])
+                self.assert_ok(self.opencode_rerun())
+                self.assertTrue(path.is_symlink())
+                self.assertEqual(json.loads(target.read_text()), installed)
+                self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+                self.assertTrue(path.is_symlink())
+                self.assertEqual(path.resolve(), target)
+                self.assertEqual(target.read_text(), original)
+                path.unlink()
+
     def test_opencode_provider_declined_then_rerun(self):
         path = Path(self.home, ".config/opencode/opencode.jsonc")
         self.assert_ok(self.opencode_only(provider_answer="n"))

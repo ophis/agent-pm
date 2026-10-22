@@ -647,7 +647,7 @@ def opencode_plugin(spec):
     conf = xdg("XDG_CONFIG_HOME", ".config") / "opencode"
     path = conf / "opencode.json" if (conf / "opencode.json").exists() else conf / "opencode.jsonc"
     data = (
-        json.JSONDecoder().raw_decode(path.read_text().lstrip())[0]
+        json.JSONDecoder().raw_decode(path.read_text().lstrip("\ufeff \t\r\n"))[0]
         if path.exists()
         else {"$schema": "https://opencode.ai/config.json"}
     )

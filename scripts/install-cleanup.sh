@@ -376,7 +376,7 @@ logins() {
 # Shared with install-cleanup.sh; edits JSONC values without rewriting unrelated text.
 opencode_config_edit() {
   python3 -I -c '
-import json, os, re, sys, tempfile
+import json, re, sys
 from pathlib import Path
 
 strings = r"\"(?:[^\"\\]|\\.)*\""
@@ -390,17 +390,11 @@ def masked(text):
 def notes(text):
     return [m[0] for m in comments.finditer(text) if not m[0].startswith("\"")]
 
-def pairs(items):
-    result = {}
-    for key, value in items:
-        if key in result:
-            raise ValueError()
-        result[key] = value
-    return result
-
 def parse(text):
     clean = commas.sub(lambda m: " " if m[0] == "," else m[0], masked(text))
-    data = json.loads(clean or "{}", object_pairs_hook=pairs)
+    if clean.startswith("\ufeff"):
+        clean = " " + clean[1:]
+    data = json.loads(clean or "{}")
     if not isinstance(data, dict):
         raise ValueError()
     return data, clean
@@ -409,14 +403,7 @@ def load(path):
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 def write(path, text):
-    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=".opencode.")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write(text)
-        os.replace(temp, path)
-    finally:
-        if os.path.exists(temp):
-            os.unlink(temp)
+    path.write_text(text, encoding="utf-8")
 
 def space(clean, index):
     while index < len(clean) and clean[index].isspace():
@@ -443,9 +430,9 @@ def edit(text, keys, value, remove=False):
     start = space(clean, 0)
     for key in keys[:-1]:
         fields, _ = members(clean, start)
-        start = next(field[2] for field in fields if field[0] == key)
+        start = next(field[2] for field in reversed(fields) if field[0] == key)
     fields, end = members(clean, start)
-    found = next((field for field in fields if field[0] == keys[-1]), None)
+    found = next((field for field in reversed(fields) if field[0] == keys[-1]), None)
     if found:
         _, key_start, value_start, value_end = found
         if not remove:
@@ -513,7 +500,7 @@ def run():
         keys = ["provider"] if len(providers) == 1 and not expected["container"] else ["provider", name]
         new = edit(text, keys, None, remove=True)
         remaining, _ = parse(new)
-        if expected["created"] and not remaining and not notes(new) and path.parent != Path(state):
+        if expected["created"] and not remaining and not notes(new) and not path.is_symlink() and path.parent != Path(state):
             path.unlink()
         else:
             write(path, new)
@@ -523,7 +510,7 @@ def run():
 try:
     run()
 except (OSError, ValueError, KeyError, TypeError, StopIteration, RecursionError):
-    sys.exit("install: OpenCode config edit failed for " + sys.argv[2] + "; nothing replaced; check JSONC, provider filters and installer records")
+    sys.exit("install: OpenCode config edit failed for " + sys.argv[2] + "; check JSONC, provider filters and installer records")
 ' "$@"
 }
 
@@ -638,7 +625,6 @@ opencode_configs() {
     for file in "${path%/*}/opencode.json" "${path%/*}/opencode.jsonc"; do
       [ -f "$file" ] || continue
       if of_kind file | grep -qxF "file"$'\t'"$file"; then continue; fi
-      drop "file"$'\t'"$file"
       parent=${file%/*}
       while under_home "$parent"; do
         drop "dir"$'\t'"$parent"

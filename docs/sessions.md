@@ -98,7 +98,8 @@ With OpenCode selected, the installer also adds the provider's URL, model and co
 `opencode.json` when there is no JSONC file. Direct `opencode models <provider>` and
 `opencode run --model <provider>/<model>` then use it without an agent-pm session. An existing provider
 in either file is left as-is, including on reruns; the default model is unchanged. Provider filters that
-exclude the selected name must be adjusted by the user before adding it. Installer cleanup removes
+exclude the selected name must be adjusted by the user before adding it. Config edits preserve symlinks
+and support JSONC comments, trailing commas, UTF-8 BOM and duplicate keys (last value wins). Installer cleanup removes
 the provider it added if its definition is unchanged. Plugin cleanup then restores the configuration
 backup from before the first plugin install, including the user's original providers and settings;
 edits made after that backup revert.

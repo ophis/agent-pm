@@ -91,12 +91,50 @@ class OpenCodeConfigTest(Case):
                 self.assertEqual({p: p.read_bytes() for p in before}, before)
                 self.assertFalse((self.state / "opencode-provider-lan.json").exists())
 
+    def test_bom_and_duplicate_keys_preserve_text_and_use_last_provider(self):
+        original = (
+            '\ufeff{// keep\n"theme":"first","theme":"last",'
+            '"provider":{"lan":{"name":"shadowed"}},"provider":{"mine":{}},}\n'
+        )
+        self.path.write_text(original)
+        self.plan()
+        shutil.copyfile(self.state / "opencode-provider.plan", self.path)
+        text = self.path.read_text()
+        self.assertTrue(text.startswith('\ufeff{// keep\n"theme":"first","theme":"last",'))
+        self.assertIn('"lan": {', text)
+        self.remove()
+        self.assertIn('"provider":{"lan":{"name":"shadowed"}}', self.path.read_text())
+        self.assertIn('"provider":{"mine":{}', self.path.read_text())
+        self.assertNotIn('"lan": {', self.path.read_text())
+        self.assertTrue(self.path.read_text().startswith("\ufeff{// keep\n"))
+
+    def test_duplicate_provider_uses_last_value_for_existing_name(self):
+        original = '{"provider":{},"provider":{"lan":{"name":"mine"}}}'
+        self.path.write_text(original)
+        self.assertEqual(self.plan(), "")
+        self.assertEqual(self.path.read_text(), original)
+
+    def test_provider_cleanup_preserves_config_symlink_and_target(self):
+        for filename in ("opencode.json", "opencode.jsonc"):
+            with self.subTest(filename=filename):
+                self.path = self.conf / filename
+                target = Path(self.home, filename)
+                target.write_text('{"theme":"mine"}')
+                self.path.symlink_to(target)
+                self.add()
+                self.assertTrue(self.path.is_symlink())
+                self.assertIn("lan", json.loads(target.read_text())["provider"])
+                self.remove()
+                self.assertTrue(self.path.is_symlink())
+                self.assertEqual(self.path.resolve(), target)
+                self.assertEqual(json.loads(target.read_text()), {"theme": "mine"})
+                self.path.unlink()
+
     def test_invalid_config_fails_without_writing_or_echoing_values(self):
         for text in (
             '{"private": "sensitive",',
             "[]",
             '{"provider": []}',
-            '{"provider": {}, "provider": {}}',
             '{"enabled_providers": ["other"]}',
             '{"disabled_providers": ["lan"]}',
         ):
@@ -143,12 +181,12 @@ class OpenCodeConfigTest(Case):
         self.assertIn("/* provider note */", self.path.read_text())
         self.assertNotIn('"lan"', self.path.read_text())
 
-    def test_failed_atomic_cleanup_keeps_original_and_no_temp_files(self):
+    def test_cleanup_write_error_hides_details(self):
         self.path.write_text('{"theme":"mine"}')
         self.add()
         before = self.path.read_bytes()
         with (
-            mock.patch("os.replace", side_effect=OSError("private detail")),
+            mock.patch.object(Path, "write_text", side_effect=OSError("private detail")),
             self.assertRaises(SystemExit) as caught,
         ):
             self.remove()
