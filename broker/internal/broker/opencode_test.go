@@ -23,6 +23,7 @@ type fakeSecrets struct {
 	readErr  error
 	putErr   error
 	puts     []string
+	reads    []string
 	returned [][]byte
 }
 
@@ -35,6 +36,7 @@ func (k *fakeSecrets) AppAccess(service, account string) (AppAccess, error) {
 }
 
 func (k *fakeSecrets) Secret(service, account string) ([]byte, error) {
+	k.reads = append(k.reads, service+"/"+account)
 	if k.readErr != nil {
 		return nil, k.readErr
 	}

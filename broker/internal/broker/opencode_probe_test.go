@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
 type probeBody struct {
@@ -80,14 +82,18 @@ func TestOpencodeProbeRejectsUntrustedInputsBeforeReadingKeys(t *testing.T) {
 	for _, base := range []string{"file:///tmp/key", "https://u:secret@host/v1", "https://host/v1?key=x", "https://host/v1#x", "http://", "http://host/\n", "http://host:bad/v1"} {
 		k := &fakeSecrets{}
 		available, err := (OpencodeKeys{Keychain: k}).Probe(context.Background(), "strata", base, nil)
-		if available || err == nil || len(k.returned) != 0 {
+		var failure *protocol.Error
+		if available || !errors.As(err, &failure) || failure.Code != protocol.Usage || len(k.reads) != 0 {
 			t.Fatalf("accepted %q", base)
 		}
 	}
 	if ValidOpencodeURL("https://host/v1") != true {
 		t.Fatal("valid URL refused")
 	}
-	if _, err := (OpencodeKeys{Keychain: &fakeSecrets{}}).Probe(context.Background(), "../bad", "https://host/v1", nil); err == nil {
+	k := &fakeSecrets{}
+	available, err := (OpencodeKeys{Keychain: k}).Probe(context.Background(), "../bad", "https://host/v1", nil)
+	var failure *protocol.Error
+	if available || !errors.As(err, &failure) || failure.Code != protocol.Usage || len(k.reads) != 0 {
 		t.Fatal("bad provider accepted")
 	}
 }
