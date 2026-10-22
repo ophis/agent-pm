@@ -867,6 +867,12 @@ class LocalBoardPromotion(Base):
         self.assertEqual(self.files(), before)
         self.assertIn("handoff-wait LOC-1", self.out)
 
+    def test_default_research_prefix_is_replaced_by_pm_prefix(self):
+        self.approved()
+        self.tracker().retitle("LOC-1", "RES: Queue survey")
+        self.assertEqual(self.run_main(), 0, self.err)
+        self.assertEqual(self.tracker().issue("LOC-2").title, "PRD: Queue survey")
+
     def test_source_reference_survives_source_moves_and_has_inverse_related(self):
         old = self.approved()
         self.assertEqual(self.run_main(), 0, self.err)

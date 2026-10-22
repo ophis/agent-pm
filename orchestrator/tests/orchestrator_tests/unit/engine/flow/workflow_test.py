@@ -45,6 +45,7 @@ class DefaultWorkflow(Case):
                     "researcher",
                     "research",
                     next="pm",
+                    title_prefix="RES",
                     start="Research started:",
                     first_failure="ready",
                     hint=HINT,
