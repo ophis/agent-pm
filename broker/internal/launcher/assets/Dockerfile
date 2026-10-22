@@ -39,6 +39,7 @@ RUN python3 -m venv --system-site-packages /opt/agent-pm/venv && mkdir -p /opt/a
     && ln -s /opt/agent-pm/delegate/src/agent_pm/delegate/team /opt/agent-pm/team \
     && printf '%s\n' '#!/bin/sh' 'export PYTHONPATH=/opt/agent-pm/session/src:/opt/agent-pm/utils/src' 'exec /opt/agent-pm/venv/bin/python -P -m agent_pm.session.cli "$@"' > /opt/agent-pm/bin/agent-pm-session \
     && printf '%s\n' '#!/bin/sh' 'exec /opt/agent-pm/venv/bin/python -I /opt/agent-pm/session/src/agent_pm/session/hosts/docker/relay.py "$@"' > /opt/agent-pm/bin/relay \
+    && printf '%s\n' '#!/bin/sh' 'exec /opt/agent-pm/venv/bin/python -I /opt/agent-pm/session/src/agent_pm/session/hosts/docker/call.py call "$@"' > /opt/agent-pm/bin/agent-pm-host-call \
     && ln -s /opt/agent-pm/lib/with-secrets /opt/agent-pm/bin/with-secrets \
     && ln -s /opt/agent-pm/clients/bin/opencode /opt/agent-pm/bin/opencode \
     && ln -s /opt/agent-pm/lib/gh /opt/agent-pm/bin/gh \
@@ -46,7 +47,7 @@ RUN python3 -m venv --system-site-packages /opt/agent-pm/venv && mkdir -p /opt/a
     && printf '%s\n' '[credential]' 'helper = /opt/agent-pm/bin/git-credential-agent-pm' 'useHttpPath = true' >> /etc/gitconfig \
     && printf '%s\n' '[core]' 'hooksPath = .githooks' >> /etc/gitconfig \
     && printf '%s\n' 'PATH=/opt/agent-pm/bin:$PATH' > /etc/profile.d/agent-pm.sh \
-    && chmod 755 /opt/agent-pm/bin/codex /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/bin/relay /opt/agent-pm/bin/python3 /opt/agent-pm/lib/with-secrets /opt/agent-pm/lib/hook-stub /opt/agent-pm/lib/workspace-check /opt/agent-pm/lib/gh /opt/agent-pm/lib/git-credential-agent-pm \
+    && chmod 755 /opt/agent-pm/bin/codex /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/bin/agent-pm-host-call /opt/agent-pm/bin/relay /opt/agent-pm/bin/python3 /opt/agent-pm/lib/with-secrets /opt/agent-pm/lib/hook-stub /opt/agent-pm/lib/workspace-check /opt/agent-pm/lib/gh /opt/agent-pm/lib/git-credential-agent-pm \
     && chmod -R a+rX /opt/agent-pm/codex-plugins \
     && chmod -R a+rX /opt/agent-pm/claude-plugins \
     && chmod -R a+rX /opt/agent-pm/plugins \

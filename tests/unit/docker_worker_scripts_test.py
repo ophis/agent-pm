@@ -1263,6 +1263,11 @@ class OpencodeInstall(Case):
 
 
 class ImageLayer(Case):
+    def test_installs_the_fixed_host_call_entrypoint(self):
+        text = (ASSETS / "Dockerfile").read_text()
+        self.assertIn("/opt/agent-pm/bin/agent-pm-host-call", text)
+        self.assertIn("/opt/agent-pm/session/src/agent_pm/session/hosts/docker/call.py call", text)
+
     def test_installs_opencode_and_ripgrep(self):
         text = (ASSETS / "Dockerfile").read_text()
         for needle in (

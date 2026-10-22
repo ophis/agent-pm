@@ -69,6 +69,7 @@ STANDALONE = frozenset(
         "clients/opencode/launcher.py",
         "clients/opencode/probe.py",
         "clients/opencode/transcript.py",
+        "hosts/docker/call.py",
     )
 )
 
