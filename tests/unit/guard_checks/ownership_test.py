@@ -197,6 +197,22 @@ class Standalone(Sample):
 
 
 class ClientNames(Sample):
+    def test_pinned_plugin_sources_are_data_only_in_session_plugin_config(self):
+        config = "session/src/agent_pm/session/config.toml"
+        pinned = '"autopilot@ophis/claude-autopilot#' + "a" * 40 + '"'
+        for path, text, expected in (
+            (config, f"plugins = [{pinned}]\n", []),
+            (config, f'plugins = [{pinned}, "codex"]\n', ["codex"]),
+            (config, f"other = [{pinned}]\n", ["claude"]),
+            (config, 'plugins = ["autopilot@ophis/claude-autopilot#main"]\n', ["claude"]),
+            ("delegate/src/agent_pm/delegate/config.toml", f"plugins = [{pinned}]\n", ["claude"]),
+        ):
+            with self.subTest(path=path, text=text):
+                self.assertEqual(
+                    ownership.client_names(self.tree({path: text})),
+                    [f"{path}:1: client name {name}" for name in expected],
+                )
+
     def test_client_names_find_opencode_outside_the_clients_package(self):
         outside = "session/src/agent_pm/session/engine/x.py"
         inside = "session/src/agent_pm/session/clients/opencode/common.py"

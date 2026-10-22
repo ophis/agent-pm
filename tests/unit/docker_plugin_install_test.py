@@ -83,9 +83,16 @@ class PluginInstall(Case):
                 "a" * 40,
             ]
             self.assertIn(fetch, commands)
+            init = ["git", "init", str(source)]
+            checkout = ["git", "-C", str(source), "checkout", "--detach", "FETCH_HEAD"]
+            self.assertIn(init, commands)
+            self.assertIn(checkout, commands)
+            self.assertLess(commands.index(init), commands.index(fetch))
+            self.assertLess(commands.index(fetch), commands.index(checkout))
             register = [client, "plugin", "marketplace", "add", str(source)]
             self.assertIn(register, commands)
             verify = ["git", "-C", str(source), "rev-parse", "HEAD"]
+            self.assertLess(commands.index(checkout), commands.index(verify))
             self.assertLess(commands.index(verify), commands.index(register))
             for name in ("autopilot", "beta"):
                 self.assertIn([client, "plugin", verb, f"{name}@claude-autopilot"], commands)
@@ -172,6 +179,26 @@ class PluginInstall(Case):
                 with self.assertRaisesRegex(ValueError, "plugin-install:.*source"):
                     self.install([self.plugins[0]], run=bad_source)
                 self.assertFalse(any(argv[0] in ("claude", "codex") for argv, _ in self.calls))
+
+    def test_relative_and_symlink_sources_cannot_escape_checkout(self):
+        for mode in ("parent", "symlink"):
+            with self.subTest(mode=mode):
+                root = Path(self.home, mode)
+                checkout, outside = root / "source", root / "outside"
+                (checkout / ".claude-plugin").mkdir(parents=True)
+                outside.mkdir()
+                (checkout / "linked").symlink_to(outside, target_is_directory=True)
+                source = "./../outside" if mode == "parent" else "./linked"
+                (checkout / ".claude-plugin/marketplace.json").write_text(
+                    json.dumps(
+                        {
+                            "name": "test-market",
+                            "plugins": [{"name": "autopilot", "source": source}],
+                        }
+                    )
+                )
+                with self.assertRaisesRegex(ValueError, "source must stay inside its checkout"):
+                    self.code["marketplace"](checkout, ["autopilot"])
 
     def test_opencode_reads_original_claude_skill_without_host_install(self):
         self.install()

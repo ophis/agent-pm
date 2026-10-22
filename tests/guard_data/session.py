@@ -8,6 +8,9 @@ SESSION = "session"
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 
 
+PLUGIN_SOURCE_CONFIG = f"{SESSION_SRC}config.toml"
+
+
 TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/host.py"
 
 
