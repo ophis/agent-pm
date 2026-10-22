@@ -391,9 +391,13 @@ docs, progress logs) go with the volume. An absent volume is `removed:false`.
 - **New start**: keeps the volume, so a session of the same name finds its checkouts; only a volume mounted at another
   cwd is deleted first, and unsaved work there fails the start, before its config dir is cleared, with that message
   and `or start it in <old cwd> again`.
-- **Reclaim**: `close` checks unused workspace volumes whose cwd is gone from the host. A failed
-  check keeps it, warns once `docker workspace <volume> kept: …`:
-  unsaved work stays until you delete it with `--force` once saved.
+- **Reclaim**: `close` starts a detached background pass over all workspace volumes whose cwd is gone
+  from the host, without waiting for their broker checks (up to 120 s each). A non-waiting lock allows
+  only one pass at a time; the broker keeps volumes used by running containers. Warnings go to
+  `~/.agent-pm/docker-state/reclaim.log`: `docker workspace <volume> kept: …`.
+  Unsaved work is kept and warned about once until you delete it with `--force` once saved.
+  Other failed checks are kept for 24 hours before a later close can retry them; they warn once per attempt.
+  A kept or failed volume does not stop the rest of the pass.
 - So a crew worker whose cwd stays keeps its volume for good (`workspace-rm` it), and a board issue that switches
   client gets a new name and empty volume; the old one goes when the issue is pruned, so fetch its unpushed work by
   hand.

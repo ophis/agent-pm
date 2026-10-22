@@ -8,9 +8,11 @@ import io
 import json
 import os
 import re
+import runpy
 import shlex
 import signal
 import stat
+import sys
 import threading
 import time
 import tomllib
@@ -1954,9 +1956,9 @@ class CloseTest(Base):
                 ["exec", "-i", CONTAINER, "tmux"],
                 ("signal", 999, signal.SIGTERM),
                 ("close", CONTAINER),
-                ["volume", "ls", "--filter", "label=agent-pm.kind"],
             ],
         )
+        self.assertEqual(self.spawned[-1][0][-2:], [DockerHost.__module__, DOCKER])
         self.assertEqual(self.docker.execs()[0], ["tmux", "has-session", "-t", "=w"])
         self.assertEqual(
             self.docker.execs()[1],
@@ -2383,16 +2385,87 @@ class ReclaimTest(Base):
         self.assertFalse([step for step in self.order if step[0] == "volume"])
         self.assertEqual(self.removed(), [])
 
-    def test_each_reclaim_checks_at_most_one_volume(self):
+    def test_each_reclaim_checks_all_eligible_volumes(self):
+        self.docker.volumes.append(f"agent-pm-ws-gone\t{self.account}/gone/w")
+        self.host.reclaim()
+        self.assertEqual(self.removed(), [self.GONE, "agent-pm-ws-gone"])
+
+    def test_a_kept_volume_does_not_block_later_volumes(self):
+        self.docker.volumes.append(f"agent-pm-ws-gone\t{self.account}/gone/w")
+        for code in ("workspace_dirty", "workspace_failed"):
+            with self.subTest(code=code):
+                self.order.clear()
+                self.broker.failing = {}
+
+                def remove(volume, code=code):
+                    self.order.append(("workspace_rm", volume))
+                    if volume == self.GONE:
+                        raise BrokerError(12, code, "kept", "not_needed", None)
+                    return True
+
+                self.broker.workspace_rm = remove
+                with self.assertLogs("session", "WARNING"):
+                    self.host.reclaim()
+                self.assertEqual(self.removed(), [self.GONE, "agent-pm-ws-gone"])
+                os.unlink(os.path.join(self.kept, self.GONE))
+
+    def test_a_failed_batch_warns_once_per_volume(self):
         self.docker.volumes.append(f"agent-pm-ws-gone\t{self.account}/gone/w")
         self.broker.failing = {
             "workspace_rm": BrokerError(14, "workspace_failed", "check failed", "not_needed", None)
         }
-        for want in (self.GONE, "agent-pm-ws-gone"):
-            self.order.clear()
-            with self.assertLogs("session", "WARNING"):
-                self.host.reclaim()
-            self.assertEqual(self.removed(), [want])
+        with self.assertLogs("session", "WARNING") as logs:
+            self.host.reclaim()
+        self.assertEqual(self.removed(), [self.GONE, "agent-pm-ws-gone"])
+        self.assertEqual(len(logs.output), 2)
+        self.order.clear()
+        with self.assertNoLogs("session", "WARNING"):
+            self.host.reclaim()
+        self.assertEqual(self.removed(), [])
+
+    def test_background_reclaim_detaches_without_listing_or_waiting(self):
+        self.spawn_mock.side_effect = None
+        with mock.patch("threading.Thread") as thread:
+            self.host._spawn_reclaim()
+        (argv,), kwargs = self.spawn_mock.call_args
+        self.assertEqual(argv[1:], ["-P", "-s", "-m", DockerHost.__module__, DOCKER])
+        self.assertTrue(kwargs["start_new_session"])
+        self.assertEqual(kwargs["cwd"], "/")
+        self.assertEqual(kwargs["stdin"], DEVNULL)
+        self.assertEqual(kwargs["stdout"], DEVNULL)
+        self.assertEqual(set(kwargs["env"]), {"PATH", "HOME", "PYTHONPATH"})
+        log = os.path.join(os.path.dirname(self.kept), "reclaim.log")
+        self.assertEqual(stat.S_IMODE(os.stat(log).st_mode), 0o600)
+        self.spawn_mock.return_value.wait.assert_not_called()
+        thread.assert_called_once()
+        self.assertEqual(self.order, [])
+
+    def test_a_background_spawn_failure_warns_and_returns(self):
+        self.spawn_mock.side_effect = OSError("cannot spawn")
+        with self.assertLogs("session", "WARNING") as logs:
+            self.host._spawn_reclaim()
+        self.assertIn("docker reclaim: cannot spawn", logs.output[0])
+
+    def test_the_background_entrypoint_runs_the_pass_with_fake_tools(self):
+        module = sys.modules[DockerHost.__module__]
+        with (
+            mock.patch("sys.argv", [module.__file__, DOCKER]),
+            mock.patch("agent_pm.session.hosts.docker.daemon.capped", self.docker),
+            mock.patch(
+                "agent_pm.session.hosts.docker.broker.Broker.workspace_rm",
+                side_effect=self.broker.workspace_rm,
+            ),
+        ):
+            runpy.run_path(module.__file__, run_name="__main__")
+        self.assertEqual(self.removed(), [self.GONE])
+
+    def test_a_piped_close_schedules_reclaim_after_closing_the_container(self):
+        def spawn():
+            self.order.append("reclaim")
+
+        with mock.patch.object(self.host, "_spawn_reclaim", side_effect=spawn):
+            self.host._close_piped("w", CONTAINER)
+        self.assertEqual(self.order, [("close", CONTAINER), "reclaim"])
 
     def test_unsaved_work_keeps_the_volume_and_warns_once_for_good(self):
         message = f"Workspace {self.GONE} has uncommitted or unpushed work in: publish."
