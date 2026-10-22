@@ -178,9 +178,9 @@ class Rework(BinFlow):
             [body for author, body in self.comments(ID) if author == ENGINEER],
             [
                 "Build started: Building.",
-                "Build ready: Added the registry.",
+                "Build ready:\nAgent report before delivery:\n\n> Added the registry.",
                 "Build started: Reworking.",
-                "Build ready: Renamed the registry.",
+                "Build ready:\nAgent report before delivery:\n\n> Renamed the registry.",
             ],
         )
         self.assertEqual(self.attachments(ID), [{"url": PR, "title": "Session registry"}])

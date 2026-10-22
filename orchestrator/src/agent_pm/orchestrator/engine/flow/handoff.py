@@ -5,7 +5,7 @@ import re
 from agent_pm.orchestrator.engine.flow.types import ISSUE_ID, Handoff
 from agent_pm.utils import one_line
 
-HANDOFF = re.compile(rf"Handoff from ({ISSUE_ID}): \S+")
+HANDOFF = re.compile(rf"Handoff from ({ISSUE_ID})(?:: \S+)?")
 
 
 SECTIONS = ("## Source", "## Instructions", "## Comments")
@@ -70,7 +70,7 @@ def head(description) -> str:
 
 def handoff(identifier, url, *, sources, instructions, comments) -> str:
     """sources: (title, url); instructions, comments: (name, at, body)."""
-    parts = [f"Handoff from {identifier}: {url}"]
+    parts = [f"Handoff from {identifier}" + (f": {url}" if url else "")]
     source, said, quoted = SECTIONS
     if sources:
         parts.append(

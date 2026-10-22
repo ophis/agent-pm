@@ -1537,7 +1537,7 @@ class RunnableRoles(ConfigFile, Case):
         self.assertEqual(
             {r: (x.input, x.title_prefix, x.files) for r, x in config.TASKS.items()},
             {
-                "researcher": ("research", "", False),
+                "researcher": ("research", "RES", False),
                 "pm": ("design", "PRD", False),
                 "engineer": ("build", "ENG", True),
             },

@@ -18,7 +18,7 @@ from agent_pm.orchestrator.trackers.linear import (
     ops,
 )
 from orchestrator_tests.case import Case
-from orchestrator_tests.unit.board_ids import HEADER, STATES, role
+from orchestrator_tests.unit.board_ids import HEADER, STATE_NAMES, STATES, role
 
 from utils.tests.case import local_section
 
@@ -149,6 +149,8 @@ class Gql:
         self.found = []
 
     def __call__(self, query, *, service, timeout=30, **v):
+        if query == linear_tracker.Q_STATE_NAME:
+            return {"workflowState": {"name": STATE_NAMES[v["i"]]}}
         name = NAMES[query]
         self.calls.append((name, service, v))
         self.timeouts.append(timeout)

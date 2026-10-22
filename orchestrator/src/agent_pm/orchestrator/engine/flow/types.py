@@ -107,7 +107,7 @@ class Ref:
 
 @dataclass(frozen=True)
 class Approved:
-    """Times: tracker text, verbatim; sources omit run records."""
+    """Times; sources omit run records; empty url: ID-only source."""
 
     key: str
     ident: str

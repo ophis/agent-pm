@@ -155,7 +155,11 @@ class Router(TmuxFlow):
         self.assertEqual(author, HARNESS_EMAIL)
         self.assertRegex(session, rf"^Run {sid} · done · .* · exit 0\n")
         self.assertEqual(
-            rest, [(ENGINEER, f"Build started: {STARTED}"), (ENGINEER, f"Build ready: {READY}")]
+            rest,
+            [
+                (ENGINEER, f"Build started: {STARTED}"),
+                (ENGINEER, f"Build ready:\nAgent report before delivery:\n\n> {READY}"),
+            ],
         )
         self.assertEqual(self.attachments(ID), [ATTACHMENT])
         self.assertEqual(self.subscribers(ID), [HUMAN])
@@ -251,7 +255,10 @@ class Router(TmuxFlow):
         self.wait_end(sid, ID)
         self.assertEqual(self.state(ID), "in_progress")
         self.assertEqual(self.ledger(ID), {sid: LEDGER[:4]})
-        self.assertEqual(self.comments(ID)[-1], (ENGINEER, f"Build ready: {READY}"))
+        self.assertEqual(
+            self.comments(ID)[-1],
+            (ENGINEER, f"Build ready:\nAgent report before delivery:\n\n> {READY}"),
+        )
         self.assertEqual(self.attachments(ID), [ATTACHMENT])
         [error] = [e for e in self.logged() if e["kind"] == "step-error"]
         self.assertEqual(

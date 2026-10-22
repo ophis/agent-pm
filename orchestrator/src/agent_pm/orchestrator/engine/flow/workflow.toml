@@ -21,6 +21,7 @@
 role = "researcher"
 input = "research"
 next = "pm"
+title_prefix = "RES"
 require_instructions = true
 start = "Research started:"
 done = ""
