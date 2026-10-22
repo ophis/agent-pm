@@ -344,7 +344,12 @@ class ResponseTest(Case):
     def test_build_passes_plugins_before_the_max_age(self):
         fake = FakeBroker(success("build-cached.json"))
         Broker(fake).build(
-            "/opt/agent-pm", plugins=("autopilot", "beta@owner/market"), max_age=604800
+            "/opt/agent-pm",
+            plugins=(
+                "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+            max_age=604800,
         )
         self.assertEqual(fake.calls, [[BROKER, *data("build-input-plugins.json")["argv"]]])
 

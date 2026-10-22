@@ -26,11 +26,11 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude [NAME] | login github agent-pm-bot [--key-file PEM --app-id ID] | login opencode PROVIDER [--auth-file FILE] | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | probe-provider --provider NAME --base-url URL | workspace-rm --volume NAME [--force]"
+const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude [NAME] | login github agent-pm-bot [--key-file PEM --app-id ID] | login opencode PROVIDER [--auth-file FILE] | build --agent-pm DIR [--plugin NAME@OWNER/REPO#COMMIT]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | probe-provider --provider NAME --base-url URL | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
-var pluginPattern = regexp.MustCompile(`^(?:autopilot|[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99})$`)
+var pluginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}#[a-f0-9]{40}$`)
 var volumePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$`)
 
 // step runs a command; progress is the broker's stderr, for build's Docker progress and start's phase times.
@@ -235,7 +235,7 @@ type buildArgs struct {
 	maxAge  time.Duration
 }
 
-// buildOptions parses build's [--plugin NAME]... [--max-age SECONDS], else nil.
+// buildOptions parses build's [--plugin NAME@OWNER/REPO#COMMIT]... [--max-age SECONDS], else nil.
 func buildOptions(args []string) *buildArgs {
 	o := &buildArgs{maxAge: -1}
 	for len(args) >= 2 && args[0] == "--plugin" && pluginPattern.MatchString(args[1]) {

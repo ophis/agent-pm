@@ -4,9 +4,9 @@
     "--agent-pm",
     "/opt/agent-pm",
     "--plugin",
-    "autopilot",
+    "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
     "--plugin",
-    "beta@owner/market",
+    "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "--max-age",
     "604800"
   ]

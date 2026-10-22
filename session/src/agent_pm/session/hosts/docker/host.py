@@ -145,7 +145,7 @@ STATE_MAX = 1 << 20
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 NO_SESSION = re.compile(r"can't find session.*|no server running on /.*", re.S)
 PLUGIN = re.compile(
-    r"(?:autopilot|[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99})"
+    r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}#[a-f0-9]{40}"
 )
 STOPS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 
@@ -572,7 +572,9 @@ class DockerHost(Host):
             or not all(isinstance(p, str) and PLUGIN.fullmatch(p) for p in plugins)
             or len(set(plugins)) != len(plugins)
         ):
-            raise ConfigError(f"[hosts.{name}] plugins: want a list of unique plugin names")
+            raise ConfigError(
+                f"[hosts.{name}] plugins: want unique name@owner/repo#40-hex-commit sources"
+            )
         self.plugins: tuple[str, ...] = tuple(plugins)
         github = self.settings.get("github", {"app": ""})
         if not isinstance(github, Mapping):

@@ -178,7 +178,7 @@ max = "max"
 #   status_line       true → tui sessions show tmux's status line
 # [hosts.docker]      each tui session in its own container, made by agent-pm-broker (docs/docker-host.md):
 #   docker            the docker CLI, an absolute path
-#   plugins           image-installed sources: autopilot or name@owner/repo; []: none (docs/docker-host.md › Plugins)
+#   plugins           image-installed sources: name@owner/repo#40-hex-commit; []: none (docs/docker-host.md › Plugins)
 #   github.app        the slug of the GitHub App whose installation tokens every Docker session gets, the one
 #                     `agent-pm-broker login github agent-pm-bot` saved (scripts/install.sh writes it); "": none
 [hosts]
@@ -196,7 +196,7 @@ isolated = false
 # DockerHost (session/src/agent_pm/session/hosts/docker/host.py)
 implementation = "agent_pm.session.hosts.docker.host:DockerHost"
 docker = "/usr/local/bin/docker"
-plugins = ["autopilot"]
+plugins = ["autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217"]
 isolated = true
 
 [hosts.docker.github]
