@@ -358,6 +358,19 @@ class TuiPolicy(Base):
         self.assertEqual(self.kinds(), ["input", "progress", "nudge", "result", "end"])
         self.assertEqual(bare(self.last("nudge")), {"kind": "nudge"})
 
+    def test_intermediate_reply_progress_is_recorded_and_final_reply_is_not_repeated(self):
+        final = "[agent-pm-progress:step] finished\n" + block(DONE)
+        result = self.faked(Reply(START), Reply("intermediate prose"), Reply(final), turn(final))
+        self.assertEqual(result.outcome.status, "done")
+        self.assertEqual(
+            [event for event in self.events if isinstance(event, Progress)],
+            [Progress("start", "go"), Progress("step", "finished")],
+        )
+        self.assertEqual(self.kinds().count("progress"), 2)
+        self.assertEqual(self.err.count("intermediate prose"), 1)
+        self.assertEqual(self.err.count("Progress (step): finished"), 1)
+        self.assertNotIn("missing progress mark", self.err)
+
     def test_it_gives_up_after_stop_limit_counted_turn_ends_and_leaves_the_session(self):
         r = self.faked(turn(START), *[STOP] * STOP_LIMIT)
         self.assertEqual((r, self.handle.calls), (GAVE_UP, [("send", NUDGE)]))

@@ -1,7 +1,7 @@
 // A fake `opencode` TUI: loads the plugins its OPENCODE_CONFIG_CONTENT lists, as OpenCode 1.19.3
 // does, and plays FAKE_SCENARIO's turns ("turns", or "resume" for a --session start) as OpenCode bus
 // events to them. The first turn's text is --prompt's (a fresh start), the rest stdin lines. A step:
-// {text, late?: ms} (late: saved ms after the turn's idle), {tool, permission?, pattern?},
+// {text, late?: ms, child?, repeat?, synthetic?, ignored?} (late: saved after idle), {tool, permission?, pattern?},
 // {bash, child?} (backend ask emits permission.asked, then --auto replies or stdin "allow" does),
 // {question, child?} (asks, then waits for the stdin
 // line "answer" or "dismiss"), {error, recover?} (recovered: the turn goes on, as
@@ -106,14 +106,18 @@ async function ask(permission, pattern, session) {
 
 async function step(item) {
   if ("text" in item) {
-    const text = { id: `prt_${++part}`, sessionID: native, type: "text", text: item.text };
-    const message = assistant([text]);
+    const session = item.child ? CHILD : native;
+    if (item.child) await emit("session.created", { info: { id: CHILD, parentID: native } });
+    const text = { id: `prt_${++part}`, sessionID: session, type: "text", text: item.text,
+      synthetic: item.synthetic, ignored: item.ignored };
+    const message = assistant([text], session);
     if (item.late) late.push([item.late, message]);
     else save(message);
-    await emit("message.part.updated", { sessionID: native, part: text, time: Date.now() });
+    await emit("message.part.updated", { part: text });
+    for (let n = 0; n < (item.repeat ?? 1); n++) await emit("message.updated", { info: message.info });
   } else if ("unsaved" in item || "errored" in item) {
     const error = item.errored ? { name: "MessageAbortedError", data: { message: "aborted" } } : undefined;
-    save({ info: { id: `msg_${++part}`, role: "assistant", time: { created: Date.now() }, error }, parts: [] });
+    save({ info: { id: `msg_${++part}`, sessionID: native, role: "assistant", time: { created: Date.now() }, error }, parts: [] });
   } else if ("tool" in item) {
     if (item.permission) await ask(item.permission, item.pattern, native);
     await tool(native, item.tool);
@@ -160,18 +164,18 @@ async function step(item) {
   return false;
 }
 
-function assistant(parts) {
+function assistant(parts, session = native) {
   const now = Date.now();
-  return { info: { id: `msg_${++part}`, role: "assistant", time: { created: now, completed: now } }, parts };
+  return { info: { id: `msg_${++part}`, sessionID: session, role: "assistant", time: { created: now, completed: now } }, parts };
 }
 
 async function turn(text, steps, first) {
   if (first && !opts.session) await emit("session.created", { info: { id: native } });
-  const user = { id: `msg_${++part}`, role: "user", time: { created: Date.now() } };
+  const user = { id: `msg_${++part}`, sessionID: native, role: "user", time: { created: Date.now() } };
   const lateUser = steps.find((item) => "lateUser" in item)?.lateUser;
   held = lateUser ? [] : null;
   save({ info: user, parts: [{ type: "text", text }] });
-  await emit("message.updated", { sessionID: native, info: user });
+  await emit("message.updated", { info: user });
   await emit("session.status", { sessionID: native, status: { type: "busy" } });
   for (const item of steps) if (await step(item)) break;
   await emit("session.status", { sessionID: native, status: { type: "idle" } });

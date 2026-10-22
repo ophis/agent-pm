@@ -23,6 +23,7 @@ from agent_pm.session.engine.types import (
     Blocked,
     ConfigError,
     Mode,
+    Reply,
     Spec,
     TurnEnd,
     TurnFailed,
@@ -159,7 +160,9 @@ class TuiSessions(Case):
     def test_a_prompt_turn_ends_done_with_its_reply(self):
         self.scene([[{"text": "Hello back."}]])
         handle, stream = self.start()
-        self.assertEqual(stream.until(TurnEnd), [Activity(""), TurnEnd("Hello back.")])
+        self.assertEqual(
+            stream.until(TurnEnd), [Activity(""), Reply("Hello back."), TurnEnd("Hello back.")]
+        )
         self.assertEqual(handle.reply, "Hello back.")
         self.assertEqual(self.words(1)[-1], "w1 done")
         (call,) = self.calls()
@@ -174,14 +177,16 @@ class TuiSessions(Case):
         handle.send("next")
         self.assertEqual(
             stream.until(TurnEnd),
-            [Activity(""), Activity("read"), Activity("read"), TurnEnd("two")],
+            [Activity(""), Activity("read"), Activity("read"), Reply("two"), TurnEnd("two")],
         )
         self.assertEqual(handle.reply, "two")
 
     def test_a_reply_saved_after_idle_is_still_read(self):
         self.scene([[{"text": "saved late", "late": 800}]])
         handle, stream = self.start()
-        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("saved late"))
+        self.assertEqual(
+            stream.until(TurnEnd), [Activity(""), Reply("saved late"), TurnEnd("saved late")]
+        )
         self.assertEqual(handle.reply, "saved late")
 
     def test_a_late_reply_is_not_the_previous_turns(self):
@@ -298,7 +303,8 @@ class TuiSessions(Case):
         self.scene([[{"tool": "read"}, {"foreign": True}, {"busy": True}, {"text": "ok"}]])
         _, stream = self.start()
         self.assertEqual(
-            stream.until(TurnEnd), [Activity(""), Activity("read"), Activity("read"), TurnEnd("ok")]
+            stream.until(TurnEnd),
+            [Activity(""), Activity("read"), Activity("read"), Reply("ok"), TurnEnd("ok")],
         )
         stream.quiet()
 
@@ -309,7 +315,7 @@ class TuiSessions(Case):
         self.assertEqual(stream.until(TurnFailed)[-1], TurnFailed("APIError", "connection refused"))
         stream.quiet()
         handle.send("again")
-        self.assertEqual(stream.until(TurnEnd), [Activity(""), TurnEnd("ok now")])
+        self.assertEqual(stream.until(TurnEnd), [Activity(""), Reply("ok now"), TurnEnd("ok now")])
         self.assertEqual(self.words(1)[-1], "w1 done")
 
     def test_a_recovered_error_still_ends_the_turn(self):
@@ -345,6 +351,41 @@ class TuiSessions(Case):
         self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("after"))
         handle.send("more")
         self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("again"))
+
+    def test_replies_arrive_before_idle_and_skip_children_and_duplicate_updates(self):
+        self.scene(
+            [
+                [
+                    {"text": "first", "repeat": 2},
+                    {"text": "child reply", "child": True},
+                    {"busy": True},
+                    {"reinit": True},
+                    {"text": "synthetic", "synthetic": True},
+                    {"text": "ignored", "ignored": True},
+                    {"text": " "},
+                    {"question": "Continue"},
+                    {"text": "first"},
+                    {"text": "last", "repeat": 2},
+                ]
+            ]
+        )
+        handle, stream = self.start()
+        before = stream.until(Blocked)
+        self.assertEqual([e for e in before if isinstance(e, Reply)], [Reply("first")])
+        handle.send("answer")
+        after = stream.until(TurnEnd)
+        self.assertEqual(
+            [e for e in after if isinstance(e, Reply)], [Reply("first"), Reply("last")]
+        )
+        self.assertEqual(after[-1], TurnEnd("last"))
+
+    def test_each_turn_delivers_its_own_replies_even_when_text_is_repeated(self):
+        self.scene([[{"text": "same"}], [{"text": "same", "late": 800}]])
+        handle, stream = self.start()
+        for n in range(2):
+            if n:
+                handle.send("next")
+            self.assertEqual(stream.until(TurnEnd), [Activity(""), Reply("same"), TurnEnd("same")])
 
     def test_a_resume_selects_the_session_and_sends_its_prompt(self):
         self.scene([[{"text": "first"}]], resume=[[{"text": "fixed"}]])

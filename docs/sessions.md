@@ -104,6 +104,8 @@ npm install -g --prefix ~/.local/opencode-1 opencode-ai@1.19.3
 executable = "/Users/<you>/.local/opencode-1/bin/opencode"   # absolute: ~ is not expanded
 ```
 
+TUI runs deliver every completed main-thread assistant text to the Delegate, including intermediate progress reports; child sessions' replies are excluded. The final text also ends the turn, and the Delegate records it once.
+
 OpenCode keeps no jsonl transcript: its sessions are in `opencode.db` (tmux: `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db`; a Docker Host session's: `~/.agent-pm/docker-state/<name>/opencode/opencode/opencode.db`, which a resume needs). To see what a session holds, or whether a `send` reached it:
 
 ```bash
