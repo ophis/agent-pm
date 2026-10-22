@@ -256,7 +256,7 @@ class LocalTracker(Tracker):
             Approved(
                 each.id,
                 each.id,
-                url(each),
+                "",
                 each.title,
                 each.priority,
                 each.created.isoformat(),

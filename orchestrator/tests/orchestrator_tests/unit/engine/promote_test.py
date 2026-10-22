@@ -7,6 +7,7 @@ import os
 import time
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -865,6 +866,21 @@ class LocalBoardPromotion(Base):
         self.assertEqual(self.run_main(), 0, self.err)
         self.assertEqual(self.files(), before)
         self.assertIn("handoff-wait LOC-1", self.out)
+
+    def test_source_reference_survives_source_moves_and_has_inverse_related(self):
+        old = self.approved()
+        self.assertEqual(self.run_main(), 0, self.err)
+        port = self.tracker()
+        child = port.issue("LOC-2")
+        self.assertEqual(child.description.splitlines()[0], "Handoff from LOC-1")
+        self.assertNotIn(Path(old).as_uri(), child.description)
+        self.assertEqual(child.handoff.source, "LOC-1")
+        self.assertIn("LOC-1", port.detail("LOC-2").related)
+        self.assertIn("LOC-1", [each.identifier for each in child.linked])
+        port.move("LOC-1", IssueState.REVIEW)
+        source = port.issue(child.handoff.source)
+        self.assertTrue(source.url.endswith("researcher/review/LOC-1%20Queue%20survey.md"))
+        self.assertIn("LOC-2", port.detail("LOC-1").related)
 
     def test_bounces_without_instructions(self):
         self.approved(comments="")

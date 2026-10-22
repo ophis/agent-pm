@@ -524,7 +524,7 @@ class Reads(Board):
 
     def test_approved(self):
         front = "priority: 2\nparent: LOC-5\nlinks:\n  - title: the doc\n    url: https://x/doc\n"
-        path = self.write("pm/approved", "LOC-1", front=front)
+        self.write("pm/approved", "LOC-1", front=front)
         self.write("engineer/approved", "LOC-2")
         self.write("me/approved", "LOC-3")
         self.write("archive", "LOC-4", history="- 2026-10-19 16:10 approved self\n")
@@ -534,7 +534,7 @@ class Reads(Board):
                 Approved(
                     "LOC-1",
                     "LOC-1",
-                    Path(path).as_uri(),
+                    "",
                     "LOC-1 title",
                     2,
                     "2026-10-19T14:02:00-04:00",
