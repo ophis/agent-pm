@@ -214,7 +214,7 @@ Codex and GitHub renew independently within one broker refresh: a Codex failure 
 For Codex, the absence of `github_refresh_failed` does not imply GitHub renewal succeeded; inspect
 `client_refresh_failed` and the [broker audit](#audit-log). A valid broker error preserves its message and optional
 cause. If the published Codex deadline expires, the supervisor reports `client_auth_expired` and closes the container;
-GitHub-only renewal keeps retrying across expiry. See [Recovery](#recovery).
+GitHub-only renewal keeps retrying across expiry. See [Codex refresh and recovery](docker-codex.md#refresh-and-recovery).
 
 ### Permissions
 
