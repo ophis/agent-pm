@@ -122,7 +122,7 @@ class ReviewToArchive(BinFlow):
             self.assertEqual(self.files(), before)
             for ident in ("LOC-5", "LOC-1"):
                 self.assertIn(
-                    f"promote handoff-wait {ident} reason=in approved/ under 10 min", self.said()
+                    f"promote handoff-wait {ident} reason=handoff age under 10 min", self.said()
                 )
 
         with self.subTest("past the undo window: promote makes each next issue once"):

@@ -105,7 +105,8 @@ LISTS = {
 }
 TRIAGE = "00000000-0000-4000-8000-000000000019"
 OTHER = "00000000-0000-4000-8000-000000000099"  # another team's state
-NEW = ("Q_SNAPSHOTS", "Q_CHANGED", "Q_STATE_NAME")  # TASK-809's, not on orchestrator-revamped
+# Queries absent from the historical fingerprints below.
+NEW = ("Q_SNAPSHOTS", "Q_CHANGED", "Q_STATE_NAME")
 # ops queries the adapter delegates to
 OPS = {getattr(ops, n): n for n in ("M_COMMENT", "M_STATE", "M_SUBSCRIBE", "Q_ISSUE_STATE")}
 HUMANS = ("Me@X.com", "you@x.com")
