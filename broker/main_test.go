@@ -265,18 +265,73 @@ func TestLoginClaudeDispatch(t *testing.T) {
 }
 
 func TestLoginOpencodeDispatch(t *testing.T) {
-	var got string
-	a := app{loginOpencode: func(provider string, out io.Writer) error {
-		got = provider
+	var got, file string
+	a := app{loginOpencode: func(provider, authFile string, out io.Writer) error {
+		got, file = provider, authFile
 		_, err := io.WriteString(out, "ok\n")
 		return err
 	}}
 	if code, out, errOut := invoke(a, "login", "opencode", "strata"); code != 0 || got != "strata" || out != "ok\n" || errOut != "" {
 		t.Fatalf("exit %d provider %q %q %q", code, got, out, errOut)
 	}
-	a = app{loginOpencode: func(string, io.Writer) error { return errors.New("no terminal") }}
+	if code, out, errOut := invoke(a, "login", "opencode", "strata", "--auth-file", "/tmp/auth.json"); code != 0 || got != "strata" || file != "/tmp/auth.json" || out != "ok\n" || errOut != "" {
+		t.Fatalf("exit %d provider %q path %q %q %q", code, got, file, out, errOut)
+	}
+	for _, args := range [][]string{
+		{"strata", "--auth-file"}, {"strata", "--auth-file", "relative"},
+		{"ollama", "--auth-file", "/tmp/auth.json"}, {"strata", "--other", "/tmp/auth.json"},
+		{"strata", "--auth-file", "/tmp/auth.json", "extra"},
+	} {
+		if code, _, _ := invoke(a, append([]string{"login", "opencode"}, args...)...); code != 2 {
+			t.Fatalf("accepted %q", args)
+		}
+	}
+	a = app{loginOpencode: func(string, string, io.Writer) error { return errors.New("no terminal") }}
 	if code, out, errOut := invoke(a, "login", "opencode", "strata"); code != 1 || out != "" || errOut != "agent-pm-broker: no terminal\n" {
 		t.Fatalf("exit %d %q %q", code, out, errOut)
+	}
+}
+
+func TestReadOpencodeAuth(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	key := "sk-SENTINEL-import"
+	for name, tc := range map[string]struct {
+		data string
+		ok   bool
+	}{
+		"api":              {`{"other":{"type":"oauth","access":"ignored"},"strata":{"type":"api","key":"` + key + `"}}`, true},
+		"missing provider": {`{"other":{"type":"api","key":"` + key + `"}}`, false},
+		"oauth":            {`{"strata":{"type":"oauth","key":"` + key + `"}}`, false},
+		"empty":            {`{"strata":{"type":"api","key":""}}`, false},
+		"missing key":      {`{"strata":{"type":"api"}}`, false},
+		"wrong key type":   {`{"strata":{"type":"api","key":["` + key + `"]}}`, false},
+		"wrong entry":      {`{"strata":"` + key + `"}`, false},
+		"null entry":       {`{"strata":null}`, false},
+		"array":            {`["` + key + `"]`, false},
+		"null":             {`null`, false},
+		"invalid":          {`{"strata":` + key, false},
+		"trailing":         {`{"strata":{"type":"api","key":"` + key + `"}} {}`, false},
+		"too large":        {strings.Repeat(" ", (1<<20)+1), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			data, err := readOpencodeAuth(path, "strata")
+			defer clear(data)
+			if tc.ok {
+				if err != nil || string(data) != key {
+					t.Fatal("API entry not read")
+				}
+			} else if err == nil || len(data) != 0 || strings.Contains(err.Error(), key) {
+				t.Fatal("invalid auth entry accepted or exposed")
+			}
+		})
+	}
+	for _, file := range []string{path + ".missing", filepath.Dir(path)} {
+		if data, err := readOpencodeAuth(file, "strata"); err == nil || len(data) != 0 {
+			t.Fatal("unreadable file accepted")
+		}
 	}
 }
 

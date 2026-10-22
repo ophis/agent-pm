@@ -83,6 +83,18 @@ With `--key-file` it refuses an existing `agent-pm-bot` item. Without it, the it
 
 It saves the key in broker-only item `agent-pm-opencode` / `<name>`, replacing an earlier one. A Docker OpenCode start needs every configured provider's key; a missing one names this login command.
 
+`scripts/install.sh --docker` with OpenCode selected first ensures the local OpenCode API entry, then imports it
+into the broker, so a local commander and Docker workers both have credentials with one key entry. To import an
+existing local entry manually instead of pasting again:
+
+```sh
+"$B" login opencode strata --auth-file "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"
+```
+
+`--auth-file` requires an absolute path and the selected provider's nonempty `type: api` entry in a JSON object
+of at most 1 MiB. It reads no key into argv or env; the keychain password may still be requested. Direct login
+without this option stores only the broker item. Reruns and cleanup ownership: [Credentials](credentials.md#opencode-provider-api-keys).
+
 ### Create the GitHub App
 
 `scripts/install.sh` does not create it. In GitHub › Settings › Developer settings › GitHub Apps › New GitHub App:

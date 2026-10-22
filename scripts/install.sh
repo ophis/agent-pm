@@ -86,7 +86,7 @@ usage: $synopsis
   --opencode-url <url>        its base URL, ending /v1
   --opencode-model <model>    its model
   --opencode-context <tokens> its context window in tokens (default 65536)
-  --opencode-key-stdin        read the provider's API key from stdin (tmux Host only)
+  --opencode-key-stdin        read the provider's API key from stdin
   --password-stdin            read the sudo password from stdin (first line, before the key)
 
 With --password-stdin or --opencode-key-stdin, stdin cannot carry the script:
@@ -205,12 +205,6 @@ opencode_flags() { [ -n "$provider_flag$url_flag$model_flag$context_flag$key_std
 
 # The flags' conflicts that flags and State already decide, before anything runs.
 early_checks() {
-  local said_docker
-  said_docker=$docker_flag
-  [ -n "$said_docker" ] || said_docker=$(state_get docker)
-  if [ -n "$key_stdin" ] && [ "$said_docker" = yes ]; then
-    usage_error "--opencode-key-stdin: the broker reads a provider key only from a terminal; log in at its prompt instead"
-  fi
   if opencode_flags && [ -n "$clients_flag" ]; then
     case ",$clients_flag," in *,opencode,*) ;; *) usage_error "--opencode-*: opencode is not among the clients" ;; esac
   fi
@@ -659,9 +653,6 @@ answers() {
   fi
   board_tracker=${board_tracker:-local}
   if opencode_flags && ! has opencode; then usage_error "--opencode-*: opencode is not among the clients"; fi
-  if [ -n "$key_stdin" ] && [ "$docker" = yes ]; then
-    usage_error "--opencode-key-stdin: the broker reads a provider key only from a terminal; log in at its prompt instead"
-  fi
   prev_provider=$(state_get opencode_provider)
   prev_url=$(state_get opencode_url)
   prev_model=$(state_get opencode_model)
@@ -1220,15 +1211,22 @@ opencode_plugin() {
 
 opencode_auth_file() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"; }
 
-# Exit 0 when OpenCode's auth.json has an entry for $1; its key is never read out.
-opencode_has_key() {
+# Checks $1 in auth.json: $2=entry for ledger ownership, api for a usable key; no key is read out.
+opencode_has_auth() {
   python3 -I -c '
-import json, sys
+import json, sys, unicodedata
 try:
     with open(sys.argv[1], encoding="utf-8") as f:
-        sys.exit(0 if sys.argv[2] in json.load(f) else 1)
+        data = json.load(f)
+    if sys.argv[3] == "entry":
+        sys.exit(0 if isinstance(data, dict) and sys.argv[2] in data else 1)
+    entry = data.get(sys.argv[2]) if isinstance(data, dict) else None
+    key = entry.get("key") if isinstance(entry, dict) and entry.get("type") == "api" else None
+    valid = isinstance(key, str) and 0 < len(key.encode("utf-8")) <= 16384 and not any(
+        c.isspace() or unicodedata.category(c) == "Cc" or c == "\ufffd" for c in key)
+    sys.exit(0 if valid else 1)
 except (OSError, ValueError):
-    sys.exit(1)' "$(opencode_auth_file)" "$1"
+    sys.exit(1)' "$(opencode_auth_file)" "$1" "$2"
 }
 
 # Adds {"<name>": {"type": "api", "key": <stdin line>}} to auth.json: 0600, atomic, others kept.
@@ -1258,8 +1256,6 @@ except BaseException:
     raise' "$(opencode_auth_file)" "$provider"
 }
 
-# The provider's key: on Docker, the broker's login (after broker_install), once per broker binary
-# while its keychain item is there; on tmux, OpenCode's auth.json.
 # Runs login command "$@" on the terminal until it succeeds (exit 0), or the user stops (exit 1).
 key_login() {
   until "$@" <&3 >&3 2>&3; do
@@ -1269,7 +1265,7 @@ key_login() {
 
 # OpenCode's own login, which stores the key in auth.json; exit 1 when no $provider key landed there.
 opencode_login() {
-  "$opencode_prefix/bin/opencode" auth login && opencode_has_key "$provider"
+  "$opencode_prefix/bin/opencode" auth login && opencode_has_auth "$provider" api
 }
 
 opencode_key() {
@@ -1277,33 +1273,39 @@ opencode_key() {
   step "OpenCode key"
   if ! has opencode; then
     skip "OpenCode not chosen"
-  elif [ "$docker" = yes ]; then
+    return
+  fi
+  if opencode_has_auth "$provider" api; then
+    skip "$provider in $(opencode_auth_file)"
+  else
+    opencode_has_auth "$provider" entry || ledger_add opencode-auth "$(opencode_auth_file)" "$provider"
+    if [ -n "$key_stdin" ]; then
+      opencode_store_key
+    else
+      say "In opencode auth login pick Other, enter $provider, then paste its API key"
+      later="rerun install.sh, or run $opencode_prefix/bin/opencode auth login"
+      if ! key_login opencode_login; then
+        skip "no $provider key: $later"
+        return
+      fi
+    fi
+  fi
+  if [ "$docker" = yes ]; then
     sha=$(shasum -a 256 "$broker" | cut -d' ' -f1)
     if [ "$(state_get login_opencode)" = "$sha $provider" ] \
       && security find-generic-password -s agent-pm-opencode -a "$provider" </dev/null >/dev/null 2>&1; then
       skip "$provider logged in to this broker"
     else
       record_item agent-pm-opencode "$provider"
-      if key_login "$broker" login opencode "$provider"; then
+      if key_login "$broker" login opencode "$provider" --auth-file "$(opencode_auth_file)"; then
         state_set login_opencode "$sha $provider"
       else
-        skip "no $provider key: rerun install.sh, or run $broker login opencode $provider"
+        skip "no $provider key: rerun install.sh, or run $broker login opencode $provider --auth-file $(opencode_auth_file)"
       fi
       case $(python3 -I -c 'import sys, urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname or "")' "$url") in
         localhost | 127.0.0.1) ;;
         *) say "The first worker that reaches $url makes macOS ask \"Allow Docker to find devices on local networks?\": click Allow (else System Settings › Privacy & Security › Local Network › Docker), or $provider stays unreachable" ;;
       esac
-    fi
-  elif opencode_has_key "$provider"; then
-    skip "$provider in $(opencode_auth_file)"
-  else
-    ledger_add opencode-auth "$(opencode_auth_file)" "$provider"
-    if [ -n "$key_stdin" ]; then
-      opencode_store_key
-    else
-      say "In opencode auth login pick Other, enter $provider, then paste its API key"
-      later="rerun install.sh, or run $opencode_prefix/bin/opencode auth login"
-      if ! key_login opencode_login; then skip "no $provider key: $later"; fi
     fi
   fi
 }
