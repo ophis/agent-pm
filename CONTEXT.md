@@ -1,6 +1,6 @@
 # Agent PM
 
-An unattended pipeline that runs role agents on tasks, in five layers.
+An unattended pipeline that runs role agents on tasks, in five layers (`docs/architecture.md`).
 
 ## Language
 
