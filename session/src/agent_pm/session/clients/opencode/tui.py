@@ -25,6 +25,7 @@ from agent_pm.session.engine.types import (
     HookCallback,
     HookKind,
     Launch,
+    Reply,
     Spec,
     TurnFailed,
 )
@@ -123,6 +124,12 @@ class OpenCodeTui(Homed, Tui):
 
     def reply(self, payload):
         return _text(payload, "last_assistant_message")
+
+    def hook_events(self, label, payload):
+        found = super().hook_events(label, payload)
+        if label == "message.completed" and (text := _text(payload, "text")).strip():
+            found.append(Reply(text))
+        return found
 
     def failure(self, payload):
         return [TurnFailed(_text(payload, "error") or "unknown", _text(payload, "message"))]
