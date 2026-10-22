@@ -180,6 +180,83 @@ func TestIssueFailures(t *testing.T) {
 	}
 }
 
+func TestStatusErrorResponses(t *testing.T) {
+	const prefix = "GitHub answered HTTP 422 to POST /app/installations/42/access_tokens"
+	for _, tc := range []struct {
+		name, body, message string
+	}{
+		{"message", `{"message":"Validation Failed","errors":[{"message":"ignored"}],"token":"fake-other-field"}`, "Validation Failed"},
+		{"html", `<html>fake-body-must-not-escape</html>`, ""},
+		{"malformed", `{"message":"not complete"`, ""},
+		{"trailing garbage", `{"message":"not valid"}garbage`, ""},
+		{"missing", `{"documentation_url":"https://docs.github.com"}`, ""},
+		{"null", `{"message":null}`, ""},
+		{"wrong type", `{"message":{"detail":"ignored"}}`, ""},
+		{"empty", `{"message":""}`, ""},
+		{"boundary", `{"message":"` + strings.Repeat("a", 200) + `"}`, strings.Repeat("a", 200)},
+		{"long unicode", `{"message":"` + strings.Repeat("错", 201) + `"}`, strings.Repeat("错", 200)},
+		{"oversized body", `{"message":"small","ignored":"` + strings.Repeat("a", maxBody) + `"}`, ""},
+		{"control characters", `{"message":"bad\nrequest\u001b[31m"}`, "bad\nrequest\x1b[31m"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := client(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_, _ = io.WriteString(w, tc.body)
+			})
+			_, _, err := c.Issue(context.Background(), "fake-request-credential", 42)
+			var se *StatusError
+			if !errors.As(err, &se) || se.Status != 422 || Transport(err) {
+				t.Fatal("expected HTTP status error")
+			}
+			want := prefix
+			if tc.message != "" {
+				want += ": " + strconv.Quote(tc.message)
+			}
+			if err.Error() != want {
+				t.Errorf("got %q, want %q", err.Error(), want)
+			}
+		})
+	}
+}
+
+func TestStatusErrorRedactsCredentials(t *testing.T) {
+	bearer := "fake-opaque-credential"
+	jwt := base64.RawURLEncoding.EncodeToString([]byte(` {"alg":"RS256"}`)) + "." +
+		base64.RawURLEncoding.EncodeToString([]byte(`{"iss":"fake-app"}`)) + ".fake-signature"
+	for name, message := range map[string]string{
+		"bearer":       "Rejected " + bearer,
+		"github token": "Rejected ghs_fakeResponseCredential",
+		"PAT":          "Rejected github_pat_fakeResponseCredential",
+		"JWT":          "Rejected " + jwt,
+		"JWT adjacent": "prefix" + jwt,
+		"JWT dotted":   "prefix." + jwt,
+		"JWT suffix":   jwt + ".suffix",
+		"unsigned JWT": strings.TrimSuffix(jwt, "fake-signature"),
+		"private key":  "-----BEGIN RSA PRIVATE KEY-----\nfake-key-material\n-----END RSA PRIVATE KEY-----",
+		"cut token":    strings.Repeat("a", 195) + "ghs_fakeResponseCredential",
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := client(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_ = json.NewEncoder(w).Encode(map[string]string{"message": message})
+			})
+			err := c.call(context.Background(), http.MethodGet, "/installation/token?access_token="+bearer, bearer, nil, http.StatusOK, nil)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			secrets := append(strings.Split(jwt, "."), bearer, "ghs_", "github_pat_", "fake-key-material", "PRIVATE KEY", "access_token")
+			for _, secret := range secrets {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatal("credential or query leaked in error")
+				}
+			}
+			if !strings.Contains(err.Error(), "GET /installation/token") || !strings.Contains(err.Error(), "[reda") {
+				t.Fatal("missing request context or redaction")
+			}
+		})
+	}
+}
+
 func TestRevoke(t *testing.T) {
 	for status, ok := range map[int]bool{204: true, 401: true, 404: true, 500: false, 403: false} {
 		c := client(t, func(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +298,24 @@ func TestBotUser(t *testing.T) {
 	id, err := c.BotUser(context.Background(), "agent-pm-bot[bot]")
 	if err != nil || id != 343764394 {
 		t.Fatalf("%d %v", id, err)
+	}
+}
+
+func TestAppSlug(t *testing.T) {
+	c := client(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/app" || r.Header.Get("Authorization") != "Bearer jwt" {
+			t.Errorf("request %s %s %v", r.Method, r.URL.Path, r.Header)
+		}
+		_, _ = io.WriteString(w, `{"id":5405554,"slug":"agentpm-test-bot","name":"agentpm test bot"}`)
+	})
+	if slug, err := c.AppSlug(context.Background(), "jwt"); err != nil || slug != "agentpm-test-bot" {
+		t.Fatalf("%q %v", slug, err)
+	}
+	for _, body := range []string{`{"slug":""}`, `{"slug":"a b"}`, `{}`, `<html>`} {
+		c := client(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) })
+		if _, err := c.AppSlug(context.Background(), "jwt"); err == nil {
+			t.Errorf("%s: no error", body)
+		}
 	}
 }
 

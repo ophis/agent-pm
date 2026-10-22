@@ -20,7 +20,7 @@ T = TypeVar("T")
 
 class LayerCommand(StrEnum):
     DELEGATE = "agent-pm-delegate"
-    LINEAR = "agent-pm-linear"
+    ORCHESTRATOR = "agent-pm-orchestrator"
     SESSION = "agent-pm-session"
 
 

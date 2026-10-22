@@ -47,7 +47,7 @@ class Sample(Case):
     def wrap_orchestrator(self, root):
         return self.tree(
             {
-                f"linear-orchestrator/{p.relative_to(root)}": p.read_text()
+                f"orchestrator/{p.relative_to(root)}": p.read_text()
                 for p in Path(root).rglob("*")
                 if p.is_file()
             }

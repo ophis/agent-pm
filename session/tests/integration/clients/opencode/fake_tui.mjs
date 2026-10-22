@@ -1,8 +1,10 @@
 // A fake `opencode` TUI: loads the plugins its OPENCODE_CONFIG_CONTENT lists, as OpenCode 1.19.3
 // does, and plays FAKE_SCENARIO's turns ("turns", or "resume" for a --session start) as OpenCode bus
 // events to them. The first turn's text is --prompt's (a fresh start), the rest stdin lines. A step:
-// {text, late?: ms} (late: saved ms after the turn's idle), {tool}, {bash, child?} (asks unless
-// --auto, then waits for the stdin line "allow"), {question, child?} (asks, then waits for the stdin
+// {text, late?: ms, reads?, child?, repeat?, synthetic?, ignored?} (late: saved after idle;
+// reads: hidden for N API reads), {tool, permission?, pattern?},
+// {bash, child?} (backend ask emits permission.asked, then --auto replies or stdin "allow" does),
+// {question, child?} (asks, then waits for the stdin
 // line "answer" or "dismiss"), {error, recover?} (recovered: the turn goes on, as
 // after a compaction), {unsaved} (an assistant message never completed), {errored} (one that
 // failed), {lateUser: ms} (the whole turn, its user message too, saved ms after its idle),
@@ -49,12 +51,18 @@ log({
 });
 
 const messages = [];
+const hidden = new Map();
 const late = []; // [ms after the turn's idle, a message saved then]
 let held = null; // a lateUser turn's messages, saved together later
 function save(message) {
   (held ?? messages).push(message);
 }
-const client = { session: { messages: async () => ({ data: messages.map((m) => ({ ...m })) }) } };
+const client = { session: { messages: async () => ({ data: messages.filter((m) => {
+  const left = hidden.get(m.info.id) ?? 0;
+  if (!left) return true;
+  hidden.set(m.info.id, left - 1);
+  return false;
+}).sort((a, b) => Number(a.info.id.slice(4)) - Number(b.info.id.slice(4))) }) } };
 const modules = [];
 for (const url of config.plugin ?? []) modules.push(await import(url));
 let hooks = [];
@@ -94,33 +102,38 @@ async function tool(session, name) {
   }
 }
 
-function asks(command) {
-  const rule = config.permission?.bash ?? "ask";
-  const found = typeof rule === "string" ? rule : (rule[command] ?? rule["*"] ?? "ask");
-  return !opts.auto && found === "ask";
+async function ask(permission, pattern, session) {
+  const rule = config.permission?.[permission] ?? "ask";
+  const found = typeof rule === "string" ? rule : (rule[pattern] ?? rule["*"] ?? "ask");
+  if (found !== "ask") return;
+  await emit("permission.asked", { id: "per_1", sessionID: session, permission, patterns: [pattern] });
+  if (!opts.auto) while ((await next()) !== "allow");
+  await emit("permission.replied", { sessionID: session, requestID: "per_1", reply: "once" });
 }
 
 async function step(item) {
   if ("text" in item) {
-    const text = { id: `prt_${++part}`, sessionID: native, type: "text", text: item.text };
-    const message = assistant([text]);
+    const session = item.child ? CHILD : native;
+    if (item.child) await emit("session.created", { info: { id: CHILD, parentID: native } });
+    const text = { id: `prt_${++part}`, sessionID: session, type: "text", text: item.text,
+      synthetic: item.synthetic, ignored: item.ignored };
+    const message = assistant([text], session);
+    if (item.reads) hidden.set(message.info.id, item.reads);
     if (item.late) late.push([item.late, message]);
     else save(message);
-    await emit("message.part.updated", { sessionID: native, part: text, time: Date.now() });
+    await emit("message.part.updated", { part: text });
+    for (let n = 0; n < (item.repeat ?? 1); n++) await emit("message.updated", { info: message.info });
   } else if ("unsaved" in item || "errored" in item) {
     const error = item.errored ? { name: "MessageAbortedError", data: { message: "aborted" } } : undefined;
-    save({ info: { id: `msg_${++part}`, role: "assistant", time: { created: Date.now() }, error }, parts: [] });
+    save({ info: { id: `msg_${++part}`, sessionID: native, role: "assistant", time: { created: Date.now() }, error }, parts: [] });
   } else if ("tool" in item) {
+    if (item.permission) await ask(item.permission, item.pattern, native);
     await tool(native, item.tool);
     save(assistant([{ type: "tool", tool: item.tool }]));
   } else if ("bash" in item) {
     const session = item.child ? CHILD : native;
     if (item.child) await emit("session.created", { info: { id: CHILD, parentID: native } });
-    if (asks(item.bash)) {
-      await emit("permission.asked", { id: "per_1", sessionID: session, permission: "bash", patterns: [item.bash] });
-      while ((await next()) !== "allow");
-      await emit("permission.replied", { sessionID: session, requestID: "per_1", reply: "once" });
-    }
+    await ask("bash", item.bash, session);
     await tool(session, "bash");
   } else if ("question" in item) {
     const session = item.child ? CHILD : native;
@@ -159,18 +172,18 @@ async function step(item) {
   return false;
 }
 
-function assistant(parts) {
+function assistant(parts, session = native) {
   const now = Date.now();
-  return { info: { id: `msg_${++part}`, role: "assistant", time: { created: now, completed: now } }, parts };
+  return { info: { id: `msg_${++part}`, sessionID: session, role: "assistant", time: { created: now, completed: now } }, parts };
 }
 
 async function turn(text, steps, first) {
   if (first && !opts.session) await emit("session.created", { info: { id: native } });
-  const user = { id: `msg_${++part}`, role: "user", time: { created: Date.now() } };
+  const user = { id: `msg_${++part}`, sessionID: native, role: "user", time: { created: Date.now() } };
   const lateUser = steps.find((item) => "lateUser" in item)?.lateUser;
   held = lateUser ? [] : null;
   save({ info: user, parts: [{ type: "text", text }] });
-  await emit("message.updated", { sessionID: native, info: user });
+  await emit("message.updated", { info: user });
   await emit("session.status", { sessionID: native, status: { type: "busy" } });
   for (const item of steps) if (await step(item)) break;
   await emit("session.status", { sessionID: native, status: { type: "idle" } });

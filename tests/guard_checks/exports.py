@@ -15,7 +15,7 @@ import types
 from tests.guard_checks.common import _at_import, _bindings, _dotted, _files, _resolve_boundary
 from tests.guard_data import OBJECT_EXPORT_MODULES, OBJECT_EXPORTS_ALLOWED
 from tests.guard_data.delegate import DELEGATE_INTERFACE, DELEGATE_INTERFACE_MODULES
-from tests.guard_data.linear_orchestrator import ORCH_PROJECT
+from tests.guard_data.orchestrator import ORCH_PROJECT
 from tests.guard_data.session import SESSION_INTERFACE, SESSION_INTERFACE_MODULES
 from tests.guards import PROJECTS
 

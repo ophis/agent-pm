@@ -4,7 +4,7 @@ from tests import guards
 from tests.case import REPO
 from tests.guard_checks import imports
 from tests.guard_data import STANDALONE
-from tests.guard_data.linear_orchestrator import ORCH_PKG, ORCH_SESSION_CONTRACT, ORCH_SRC
+from tests.guard_data.orchestrator import ORCH_PKG, ORCH_SESSION_CONTRACT, ORCH_SRC
 from tests.guard_data.session import SESSION_SRC, TMUX_HOST
 from tests.guard_samples import PKG, Sample
 
@@ -14,7 +14,7 @@ class OrchestratorSessionImports(Sample):
         root = self.tree(
             {
                 "pyproject.toml": config or Path(REPO, "pyproject.toml").read_text(),
-                f"linear-orchestrator/{ORCH_SRC}{module}": sample,
+                f"orchestrator/{ORCH_SRC}{module}": sample,
             }
         )
         return imports.orchestrator_session_imports(root)
@@ -22,7 +22,7 @@ class OrchestratorSessionImports(Sample):
     def message(self, rel, name):
         module = f"{ORCH_PKG}.{rel.removesuffix('.py').replace('/', '.')}"
         return (
-            f"linear-orchestrator/{ORCH_SRC}{rel}: {module} imports {name} from "
+            f"orchestrator/{ORCH_SRC}{rel}: {module} imports {name} from "
             "agent_pm.session; go through agent_pm.delegate"
         )
 
@@ -52,9 +52,7 @@ class OrchestratorSessionImports(Sample):
         config = Path(REPO, "pyproject.toml").read_text()
         contract = f'name = "{ORCH_SESSION_CONTRACT}"\n'
         self.assertIn(contract, config)
-        edge = (
-            'ignore_imports = ["agent_pm.linear_orchestrator.engine.prune -> agent_pm.session"]\n'
-        )
+        edge = 'ignore_imports = ["agent_pm.orchestrator.engine.prune -> agent_pm.session"]\n'
         config = config.replace(contract, contract + edge, 1)
         self.assertEqual(
             self.check("engine/prune.py", "", config),
@@ -63,7 +61,7 @@ class OrchestratorSessionImports(Sample):
 
 
 class OrchestratorImports(Sample):
-    """FR-3: linear_orchestrator imports only the standard library, itself, agent_pm.utils and the
+    """FR-3: orchestrator imports only the standard library, itself, agent_pm.utils and the
     names delegate's __all__ exports; no other package imports it.
     """
 
@@ -78,7 +76,7 @@ class OrchestratorImports(Sample):
         self.assertEqual(imports.orchestrator_imports(REPO), [])
 
     def test_only_delegates_exports_utils_itself_and_the_standard_library_cross_the_layer(self):
-        rel = f"linear-orchestrator/{ORCH_SRC}engine/prune.py"
+        rel = f"orchestrator/{ORCH_SRC}engine/prune.py"
         for files, expected in (
             *(
                 ({rel: sample}, [])
@@ -88,7 +86,7 @@ class OrchestratorImports(Sample):
                     "from agent_pm import delegate\ndelegate.ConfigError\n",
                     "from agent_pm.utils import Record\nimport agent_pm.utils\n",
                     "import os.path\nfrom collections.abc import Mapping\nimport __future__\n",
-                    "from agent_pm.linear_orchestrator.engine import runs\nfrom . import log\n",
+                    "from agent_pm.orchestrator.engine import runs\nfrom . import log\n",
                 )
             ),
             *(
@@ -119,24 +117,24 @@ class OrchestratorImports(Sample):
                 )
             ),
             *(
-                ({other: sample}, [f"{other}: imports agent_pm.linear_orchestrator (FR-3)"])
+                ({other: sample}, [f"{other}: imports agent_pm.orchestrator (FR-3)"])
                 for other in (
                     f"{project}/{PKG}/{project}/engine/sample.py"
                     for project in ("manager", "delegate", "session", "utils")
                 )
                 for sample in (
-                    "from agent_pm.linear_orchestrator import LinearRun\n",
-                    "import agent_pm.linear_orchestrator.engine.runs\n",
-                    "from agent_pm import linear_orchestrator\n",
-                    "import agent_pm\nagent_pm.linear_orchestrator.LinearRun\n",
+                    "from agent_pm.orchestrator import LinearRun\n",
+                    "import agent_pm.orchestrator.engine.runs\n",
+                    "from agent_pm import orchestrator\n",
+                    "import agent_pm\nagent_pm.orchestrator.LinearRun\n",
                 )
             ),
             (
                 {
-                    "linear-orchestrator/tests/orchestrator_tests/sample.py": (
+                    "orchestrator/tests/orchestrator_tests/sample.py": (
                         "from agent_pm.delegate.composer import Composer\n"
                     ),
-                    "manager/tests/sample.py": "from agent_pm import linear_orchestrator\n",
+                    "manager/tests/sample.py": "from agent_pm import orchestrator\n",
                 },
                 [],
             ),

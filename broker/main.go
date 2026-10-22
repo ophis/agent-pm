@@ -26,11 +26,11 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude [NAME] | login github agent-pm-bot | login opencode PROVIDER | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
+const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude [NAME] | login github agent-pm-bot [--key-file PEM --app-id ID] | login opencode PROVIDER [--auth-file FILE] | build --agent-pm DIR [--plugin NAME@OWNER/REPO#COMMIT]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | probe-provider --provider NAME --base-url URL | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
-var pluginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9][A-Za-z0-9._-]*)?$`)
+var pluginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}#[a-f0-9]{40}$`)
 var volumePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$`)
 
 // step runs a command; progress is the broker's stderr, for build's Docker progress and start's phase times.
@@ -41,12 +41,74 @@ type app struct {
 	start, close  step
 	refresh       func(ctx context.Context, container, manifest string) (any, error)
 	status        func(ctx context.Context) (any, error)
+	probeOpencode func(ctx context.Context, provider, base string) (any, error)
 	workspaceRm   func(ctx context.Context, volume string, force bool) (any, error)
-	login         func(account string, out io.Writer) error // login claude [NAME]
-	loginGitHub   func(ctx context.Context, app string, out io.Writer) error
+	login         func(account string, out io.Writer) error                                // login claude [NAME]
+	loginGitHub   func(ctx context.Context, app string, key *keyFile, out io.Writer) error // key: nil without --key-file
 	loginCodex    func(context.Context, io.Writer) error
-	loginOpencode func(provider string, out io.Writer) error
+	loginOpencode func(provider, authFile string, out io.Writer) error
 	installCodex  func(context.Context, string, bool) (any, error)
+}
+
+// keyFile is login github's --key-file content and --app-id.
+type keyFile struct {
+	id  string
+	pem []byte
+}
+
+// maxKeyFile caps --key-file: a 4096-bit PEM key is about 3.3 KB.
+const maxKeyFile = 16384
+
+// readKeyFile reads the --key-file PEM, at most maxKeyFile bytes; errors name only the path.
+func readKeyFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading the App private key failed: %w", err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxKeyFile+1))
+	switch {
+	case err != nil:
+		clear(data)
+		return nil, fmt.Errorf("reading the App private key failed: %w", err)
+	case len(data) > maxKeyFile:
+		clear(data)
+		return nil, fmt.Errorf("%s: more than %d bytes", path, maxKeyFile)
+	}
+	return data, nil
+}
+
+// readOpencodeAuth reads only provider's API entry. Errors never include JSON contents or decoder details.
+func readOpencodeAuth(path, provider string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, errors.New("cannot read OpenCode auth.json")
+	}
+	defer f.Close()
+	const maxAuthFile = 1 << 20
+	data, err := io.ReadAll(io.LimitReader(f, maxAuthFile+1))
+	defer clear(data)
+	if err != nil || len(data) > maxAuthFile {
+		return nil, errors.New("cannot read OpenCode auth.json (limit 1 MiB)")
+	}
+	var entries map[string]json.RawMessage
+	err = json.Unmarshal(data, &entries)
+	defer func() {
+		for _, entry := range entries {
+			clear(entry)
+		}
+	}()
+	if err != nil {
+		return nil, errors.New("OpenCode auth.json is not a JSON object")
+	}
+	var entry struct {
+		Type string `json:"type"`
+		Key  string `json:"key"`
+	}
+	if json.Unmarshal(entries[provider], &entry) != nil || entry.Type != "api" || entry.Key == "" {
+		return nil, fmt.Errorf("OpenCode auth.json has no API key for provider %s", provider)
+	}
+	return []byte(entry.Key), nil
 }
 
 func main() {
@@ -81,7 +143,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 				}
 				return emit(stdout, result)
 			}
-		case "version", "build", "start", "refresh", "close", "status", "workspace-rm":
+		case "version", "build", "start", "refresh", "close", "status", "workspace-rm", "probe-provider":
 			command = args[0]
 		case "login":
 			var login func() error
@@ -92,10 +154,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 				login = func() error { return a.login(launcher.DefaultClaudeAccount, stdout) }
 			case len(args) == 3 && args[1] == "claude" && launcher.ValidClaudeAccount(args[2]):
 				login = func() error { return a.login(args[2], stdout) }
-			case len(args) == 3 && args[1] == "github" && broker.GitHubApps[args[2]]:
-				login = func() error { return a.loginGitHub(ctx, args[2], stdout) }
+			case len(args) == 3 && args[1] == "github" && args[2] == broker.AppKeyService:
+				login = func() error { return a.loginGitHub(ctx, args[2], nil, stdout) }
+			case len(args) == 7 && args[1] == "github" && args[2] == broker.AppKeyService && args[3] == "--key-file" && args[5] == "--app-id":
+				login = func() error {
+					pem, err := readKeyFile(args[4])
+					if err != nil {
+						return err
+					}
+					defer clear(pem)
+					return a.loginGitHub(ctx, args[2], &keyFile{id: args[6], pem: pem}, stdout)
+				}
 			case len(args) == 3 && args[1] == "opencode" && launcher.ValidProvider(args[2]):
-				login = func() error { return a.loginOpencode(args[2], stdout) }
+				login = func() error { return a.loginOpencode(args[2], "", stdout) }
+			case len(args) == 5 && args[1] == "opencode" && launcher.ValidProvider(args[2]) && args[3] == "--auth-file" && isPath(args[4]):
+				login = func() error { return a.loginOpencode(args[2], args[4], stdout) }
 			}
 			if login != nil {
 				if err := login(); err != nil {
@@ -131,6 +204,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 		}, args[2]
 	case command == "status" && len(args) == 1:
 		s = func(ctx context.Context, _ string, _ io.Writer) (any, error) { return a.status(ctx) }
+	case command == "probe-provider" && len(args) == 5 && args[1] == "--provider" && launcher.ValidProvider(args[2]) && args[3] == "--base-url" && broker.ValidOpencodeURL(args[4]):
+		s = func(ctx context.Context, _ string, _ io.Writer) (any, error) {
+			return a.probeOpencode(ctx, args[2], args[4])
+		}
 	case command == "close" && len(args) == 3 && args[1] == "--container" && containerPattern.MatchString(args[2]):
 		s, arg = a.close, args[2]
 	case command == "workspace-rm" && (len(args) == 3 || len(args) == 4 && args[3] == "--force") && args[1] == "--volume" &&
@@ -158,7 +235,7 @@ type buildArgs struct {
 	maxAge  time.Duration
 }
 
-// buildOptions parses build's [--plugin NAME]... [--max-age SECONDS], else nil.
+// buildOptions parses build's [--plugin NAME@OWNER/REPO#COMMIT]... [--max-age SECONDS], else nil.
 func buildOptions(args []string) *buildArgs {
 	o := &buildArgs{maxAge: -1}
 	for len(args) >= 2 && args[0] == "--plugin" && pluginPattern.MatchString(args[1]) {
@@ -227,6 +304,14 @@ func tokens(home string, rec *audit.Recorder) broker.GitHub {
 
 func system() app {
 	return app{
+		probeOpencode: func(ctx context.Context, provider, base string) (any, error) {
+			home, err := accountHome()
+			if err != nil {
+				return nil, err
+			}
+			available, err := (broker.OpencodeKeys{Keychain: broker.SystemKeychain{Home: home}}).Probe(ctx, provider, base, nil)
+			return map[string]bool{"available": available}, err
+		},
 		build: func(ctx context.Context, pkg string, plugins []string, maxAge time.Duration, progress io.Writer) (any, error) {
 			return withHost("build", "", progress, func(h launcher.Host) (any, error) { return h.Build(ctx, pkg, plugins, maxAge) })
 		},
@@ -275,7 +360,7 @@ func system() app {
 				return broker.ReadHidden()
 			}, broker.SystemKeychain{Home: home}, os.Stderr, out)
 		},
-		loginGitHub: func(ctx context.Context, app string, out io.Writer) error {
+		loginGitHub: func(ctx context.Context, app string, key *keyFile, out io.Writer) error {
 			home, err := accountHome()
 			if err != nil {
 				return err
@@ -283,16 +368,22 @@ func system() app {
 			if err := broker.CheckInstalled(); err != nil {
 				return err
 			}
-			if err := broker.LoginGitHub(app, broker.SystemKeychain{Home: home}, func() ([]byte, error) {
+			k := broker.SystemKeychain{Home: home}
+			if key != nil {
+				if err := broker.StoreAppKey(app, key.id, key.pem, k); err != nil {
+					return err
+				}
+			}
+			if err := broker.LoginGitHub(app, k, func() ([]byte, error) {
 				fmt.Fprint(os.Stderr, "Login keychain password, to make "+app+" trust only the broker (hidden): ")
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()
 			}, out); err != nil {
 				return err
 			}
-			return tokens(home, nil).SaveUser(ctx, app, out)
+			return tokens(home, nil).SaveUser(ctx, out)
 		},
-		loginOpencode: func(provider string, out io.Writer) error {
+		loginOpencode: func(provider, authFile string, out io.Writer) error {
 			home, err := accountHome()
 			if err != nil {
 				return err
@@ -301,6 +392,9 @@ func system() app {
 				return err
 			}
 			return broker.LoginOpencode(provider, func() ([]byte, error) {
+				if authFile != "" {
+					return readOpencodeAuth(authFile, provider)
+				}
 				fmt.Fprint(os.Stderr, "OpenCode provider "+provider+" API key (hidden): ")
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()

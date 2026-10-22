@@ -320,13 +320,13 @@ class DelegateObjectExports(Sample):
 
 
 class OrchestratorObjectExports(Sample):
-    INIT = "linear-orchestrator/src/agent_pm/linear_orchestrator/__init__.py"
+    INIT = "orchestrator/src/agent_pm/orchestrator/__init__.py"
 
     def found(self, source):
         root = self.tree(
             {
                 "delegate/src/agent_pm/delegate/event/__init__.py": "__all__ = []\n",
-                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/run.py": (
+                "orchestrator/src/agent_pm/orchestrator/engine/run.py": (
                     "class LinearRun: pass\ndef launch(): pass\n"
                 ),
                 self.INIT: source,
@@ -337,7 +337,7 @@ class OrchestratorObjectExports(Sample):
     def test_classes_and_constants_pass_but_functions_and_a_missing_all_fail(self):
         for source, expected in (
             (
-                "from agent_pm.linear_orchestrator.engine.run import LinearRun\n"
+                "from agent_pm.orchestrator.engine.run import LinearRun\n"
                 "KINDS = ('a',)\n__all__ = ['LinearRun', 'KINDS']\n",
                 [],
             ),
@@ -345,11 +345,11 @@ class OrchestratorObjectExports(Sample):
                 (source, [f"{self.INIT}: __all__ exports function launch (FR-44)"])
                 for source in (
                     "def launch(): pass\n__all__ = ['launch']\n",
-                    "from agent_pm.linear_orchestrator.engine.run import launch\n__all__ = ['launch']\n",
+                    "from agent_pm.orchestrator.engine.run import launch\n__all__ = ['launch']\n",
                 )
             ),
             (
-                "from agent_pm.linear_orchestrator.engine.run import LinearRun\n",
+                "from agent_pm.orchestrator.engine.run import LinearRun\n",
                 [f"{self.INIT}: no literal __all__"],
             ),
         ):

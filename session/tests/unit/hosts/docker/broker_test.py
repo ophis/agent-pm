@@ -31,6 +31,10 @@ CONTAINER = "agent-pm-worker_1-0123456789abcdef0123456789abcdef"
 VOLUME = "agent-pm-ws-worker_1"
 KEYS = broker.client_keys(REPO)
 CALLS = {
+    "probe_provider_output": (
+        "probe-provider",
+        lambda b: b.probe_provider("strata", "https://strata.test/v1"),
+    ),
     "version_output": ("version", lambda b: b.version()),
     "build_output": ("build", lambda b: b.build("/opt/agent-pm")),
     "start_output": ("start", lambda b: b.start(MANIFEST, clients=KEYS)),
@@ -39,6 +43,7 @@ CALLS = {
     "workspace_rm_output": ("workspace-rm", lambda b: b.workspace_rm(VOLUME)),
 }
 COMMANDS = {
+    "probe-provider": CALLS["probe_provider_output"],
     "version": CALLS["version_output"],
     "build": CALLS["build_output"],
     "start": CALLS["start_output"],
@@ -64,6 +69,16 @@ class PluginRootTest(Case):
 
 
 class ResponseTest(Case):
+    def test_provider_probe_response_is_only_a_boolean(self):
+        for value in (True, False):
+            runner = FakeBroker((0, json.dumps({"available": value}), ""))
+            self.assertIs(Broker(runner).probe_provider("strata", "https://strata.test/v1"), value)
+        for response in ({}, {"available": 1}, {"available": True, "key": "secret"}):
+            with self.subTest(response=response), self.assertRaises(SessionError):
+                Broker(FakeBroker((0, json.dumps(response), ""))).probe_provider(
+                    "strata", "https://strata.test/v1"
+                )
+
     def test_update_record_presence_follows_the_client_expiry(self):
         claude = data("start-output.json")
         claude.pop("client_update", None)
@@ -229,6 +244,35 @@ class ResponseTest(Case):
                 CONTAINER, MANIFEST
             )
 
+    def test_refresh_failure_keeps_the_brokers_message_and_cause(self):
+        message = "Writing Codex credentials into the container failed"
+        cause = "bootstrap: cannot write managed Codex credentials: No space left on device"
+
+        def fails(code, exit_code, **extra):
+            error = {
+                "command": "refresh",
+                "code": code,
+                "message": message,
+                "cleanup": "not_needed",
+            }
+            return exit_code, "", json.dumps({"exit_code": exit_code, "error": error | extra})
+
+        with self.assertRaises(BrokerError) as raised:
+            Broker(FakeBroker(fails("refresh_failed", 16, cause=cause))).refresh(
+                CONTAINER, MANIFEST
+            )
+        self.assertEqual(
+            (raised.exception.code, raised.exception.cause, str(raised.exception)),
+            ("refresh_failed", cause, f"broker: {message} ({cause})"),
+        )
+        with self.assertRaises(BrokerError) as raised:
+            Broker(FakeBroker(fails("refresh_failed", 16))).refresh(CONTAINER, MANIFEST)
+        self.assertEqual(
+            (raised.exception.cause, str(raised.exception)), (None, f"broker: {message}")
+        )
+        with self.assertRaisesRegex(SessionError, "bad response to refresh: error fields"):
+            Broker(FakeBroker(fails("start_failed", 9, cause=cause))).refresh(CONTAINER, MANIFEST)
+
     def test_parsed_successes(self):
         self.assertEqual(
             Broker(FakeBroker(success("build-cached.json"))).build("/opt/agent-pm"),
@@ -299,7 +343,14 @@ class ResponseTest(Case):
 
     def test_build_passes_plugins_before_the_max_age(self):
         fake = FakeBroker(success("build-cached.json"))
-        Broker(fake).build("/opt/agent-pm", plugins=("autopilot", "beta@market"), max_age=604800)
+        Broker(fake).build(
+            "/opt/agent-pm",
+            plugins=(
+                "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+            max_age=604800,
+        )
         self.assertEqual(fake.calls, [[BROKER, *data("build-input-plugins.json")["argv"]]])
 
     def test_build_progress_before_the_error_object_is_not_the_error(self):

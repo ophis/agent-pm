@@ -112,7 +112,7 @@ max = "max"
 #                    OpenCode config (OPENCODE_CONFIG_CONTENT) holds the ollama provider at
 #                    http://<the Host's address>:<ollama_port>/v1 and the configured providers, every other provider
 #                    off (enabled_providers: OpenCode's built-in ones, OpenCode Zen's included), autoupdate off and
-#                    permission.bash = "ask" (but a run's pre-approved commands): headless refuses the shell call, the
+#                    auto's permission.bash = "ask" (but a run's pre-approved commands): headless refuses the shell call, the
 #                    TUI asks and the session is blocked. OpenCode runs any cwd's .opencode plugins and opencode.json
 #                    (it has no project trust), so outside an isolated Host a launch, a resume's included, whose cwd is
 #                    not trusted (Access.project) is refused before it starts (docs/sessions.md › OpenCode sessions)
@@ -127,7 +127,8 @@ max = "max"
 #                    and without it such a run is refused
 #   env              variables added to every launch; never one that overrides the launch's OpenCode config
 #                    (OPENCODE_PERMISSION, OPENCODE_CONFIG, OPENCODE_CONFIG_DIR, OPENCODE_CONFIG_CONTENT); empty → none
-# [clients.opencode.modes]    auto: none (bash asks); yolo: --auto, every permission granted
+# [clients.opencode.modes]    auto: none (bash asks); yolo: --auto plus backend allow for bash/read/external_directory/
+#                            doom_loop, avoiding transient permission.asked events; edit denies stay, questions still ask
 # [clients.opencode.tiers]    tier "1".."4" → its --model: ollama/<model> or <name>/<model> of a providers table, which
 #                             lists the model; any other provider is refused
 # [clients.opencode.providers.<name>]  an OpenAI-compatible provider (e.g. a LAN server; docs/sessions.md › OpenCode
@@ -177,8 +178,9 @@ max = "max"
 #   status_line       true → tui sessions show tmux's status line
 # [hosts.docker]      each tui session in its own container, made by agent-pm-broker (docs/docker-host.md):
 #   docker            the docker CLI, an absolute path
-#   plugins           the account's installed plugins every container's image holds, by name or name@marketplace; []: none
-#   github.app        the GitHub App whose installation tokens every Docker session gets; "": none
+#   plugins           image-installed sources: name@owner/repo#40-hex-commit; []: none (docs/docker-host.md › Plugins)
+#   github.app        the slug of the GitHub App whose installation tokens every Docker session gets, the one
+#                     `agent-pm-broker login github agent-pm-bot` saved (scripts/install.sh writes it); "": none
 [hosts]
 default = "tmux"
 
@@ -194,11 +196,13 @@ isolated = false
 # DockerHost (session/src/agent_pm/session/hosts/docker/host.py)
 implementation = "agent_pm.session.hosts.docker.host:DockerHost"
 docker = "/usr/local/bin/docker"
-plugins = ["autopilot"]
+plugins = ["autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217"]
 isolated = true
 
 [hosts.docker.github]
-app = "agent-pm-bot"
+app = ""
+# local: [session.hosts.docker.github]
+# local: app = "<your App's slug>"
 
 # ── Viewer ──────────────────────────────────────────────
 # [viewer]            how the Viewer (session/src/agent_pm/session/viewer/viewer.py) shows every Host's sessions:

@@ -3,7 +3,7 @@
 - The built-in roles, tasks and templates live in `delegate/src/agent_pm/delegate/team/`; don't edit them.
 - A role's run settings (model, client, destination, commands) go in `~/.agent-pm/config.local.toml`.
 - Your own roles, tasks and templates go in a team dir. A team dir only adds: it cannot change or replace a built-in role, task or template, so a new task needs a new role.
-- Only researcher, pm and engineer run on the board ([On the board](#on-the-board)); your own roles run through `/agent-pm:act-as`, `/agent-pm:manage` and `agent-pm-delegate run`.
+- Your own roles run through `/agent-pm:act-as`, `/agent-pm:manage` and `agent-pm-delegate run`, and on the board as a workflow stage ([On the board](#on-the-board)).
 
 ## See what exists
 
@@ -29,7 +29,7 @@ dir = "Research/"
 - **Claude account:** `[delegate.roles.<role>.accounts]` `claude = "work"` runs the role's Docker Claude sessions on that registered account, keyed by client: [Docker host › Claude accounts](docker-host.md#claude-accounts).
 - **Destination:** `[output]` (`local`, `github`, `pull-request` or `orchestrator`); a lower level's `[output]` replaces the whole table.
 - **Access:** `read`, `write` and `commands` widen what the agent run may read, write and run; `templates` inlines templates into its prompt.
-- **Board runs:** the same keys under `[linear_orchestrator.core]` (e.g. `[linear_orchestrator.core.roles.engineer]`) apply to board runs only, after the `[delegate]` ones.
+- **Board runs:** the same keys under `[orchestrator.core]` (e.g. `[orchestrator.core.roles.engineer]`) apply to board runs only, after the `[delegate]` ones.
 
 ## Add roles, tasks and templates
 
@@ -84,4 +84,28 @@ It starts with a `# ` heading, has exactly one `[agent-pm-progress:start] <what 
 
 ## On the board
 
-The router's per-role behavior is code: `TASKS` in `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py` has researcher, pm and engineer. A `[linear_orchestrator.roles.<role>]` table for any other role stops every `agent-pm-linear` command with `has no entry in config.TASKS`, and a `[linear_orchestrator.task_labels]` or `[linear_orchestrator.task_tiers]` entry must name a task of an orchestrated role. Board runs' run keys: `[linear_orchestrator.core]`, above.
+The board's stages (order, input layout, title prefix, comment leads, whether a Handoff needs instructions, the state a failed first run goes to) are a workflow file. The packaged one, `orchestrator/src/agent_pm/orchestrator/engine/flow/workflow.toml`, has researcher, pm and engineer; its header lists every key and its default. To change a stage, or to put your own role on the board, copy it (e.g. into your team dir), edit the copy and name it in `~/.agent-pm/config.local.toml`; it replaces the packaged one whole:
+
+```toml
+[orchestrator]
+workflow = "~/team/workflow.toml"
+
+[orchestrator.linear.roles.analyst]   # each stage role's Linear account
+account = "analyst@example.com"
+key = "linear-analyst"
+```
+
+A stage needs only `role` and `input` (`research`, `design` or `build`: the layout its input takes):
+
+```toml
+[[stage]]
+role = "analyst"
+input = "research"
+next = "pm"           # promote hands its Handoff issues to pm
+```
+
+- The role's charter (`roles/<role>.md`, here in a team dir) says where its output goes. Its runs end as every stage's do: done or a question → In Review, a failure → `first_failure`, a failure after a resume → In Review.
+- `[orchestrator.roles.<role>] max_runs` is optional: no table → 1.
+- Every `agent-pm-orchestrator` command checks the file when it loads it and exits 2 naming the file and stage: an unknown or ill-typed key, a role the Delegate does not know, a `next` that names no other stage, a `next` chain with a cycle.
+- At least one stage's role must still publish documents to GitHub (its `[output]`), as the packaged researcher and pm do.
+- A `[orchestrator.roles.<role>]` or `[orchestrator.linear.roles.<role>]` table must name a stage's role (one for a packaged stage your workflow leaves out is ignored), and a `[orchestrator.linear.task_labels]` or `[orchestrator.task_tiers]` entry a task of one. Board runs' run keys: `[orchestrator.core]`, above.

@@ -20,7 +20,13 @@ from session.tests import live_tmux
 
 CTMUX = os.path.join(REPO, "manager", "skills", "manage", "scripts", "ctmux")
 LAUNCHER = os.path.join(REPO, "manager", "skills", "manage", "scripts", "launcher")
-COMMANDS = ("ctmux", "agent-pm-crew", "agent-pm-session", "agent-pm-delegate", "agent-pm-linear")
+COMMANDS = (
+    "ctmux",
+    "agent-pm-crew",
+    "agent-pm-session",
+    "agent-pm-delegate",
+    "agent-pm-orchestrator",
+)
 USAGE = "usage: ctmux <session-name> | ctmux --install"
 FAKE = """#!{python} -I
 import json, os, sys
@@ -87,7 +93,7 @@ def created(name: str, cwd: str, shell: str, root: str = REPO) -> list[str]:
 def plugin(root: str) -> str:
     """A plugin install at root: this checkout's projects linked in, its bin/ copied."""
     os.makedirs(root)
-    for project in ("utils", "session", "delegate", "manager", "linear-orchestrator"):
+    for project in ("utils", "session", "delegate", "manager", "orchestrator"):
         os.symlink(os.path.join(REPO, project), os.path.join(root, project))
     shutil.copytree(os.path.join(REPO, "bin"), os.path.join(root, "bin"))
     return root
@@ -121,6 +127,7 @@ class FakeTmux(Case):
         self.installed = os.path.join(self.agent_pm, "bin")
         self.dst = os.path.join(self.installed, "ctmux")
         self.codex = os.path.join(self.home, ".codex", "plugins", "cache", "agent-pm", "agent-pm")
+        self.opencode = os.path.join(self.home, ".cache", "opencode", "packages")
         self.env = {
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "HOME": self.home,
@@ -281,6 +288,46 @@ class FakeTmux(Case):
         _, _, _, calls = self.ctmux("s1", script=self.dst)
         self.assertEqual(calls[1][2:], created("s1", self.cwd, "/bin/zsh", root))
 
+    def opencode_install(self, version: str, spec: str = "") -> str:
+        """OpenCode's install of the git spec pinned to `version` (or `spec`): its package dir."""
+        spec = spec or f"agent-pm@git+https:/github.com/ophis/agent-pm.git#v{version}"
+        root = plugin(os.path.join(self.opencode, spec, "node_modules", "agent-pm"))
+        with open(os.path.join(root, "package.json"), "w", encoding="utf-8") as f:
+            json.dump({"name": "agent-pm", "version": version}, f)
+        return root
+
+    def test_without_claude_or_codex_the_newest_opencode_install_runs(self):
+        self.install()
+        for version in ("0.9.0", "0.10.0"):
+            self.opencode_install(version)
+        newest = os.path.join(
+            self.opencode, "agent-pm@git+https:/github.com/ophis/agent-pm.git#v0.10.0"
+        )
+        _, _, err, calls = self.ctmux("s1", script=self.dst)
+        self.assertEqual(err, "")
+        self.assertEqual(
+            calls[1][2:],
+            created("s1", self.cwd, "/bin/zsh", os.path.join(newest, "node_modules", "agent-pm")),
+        )
+        cache = os.path.join(self.home, "xdg cache")
+        self.opencode = os.path.join(cache, "opencode", "packages")
+        root = self.opencode_install("0.1.0", spec="agent-pm")
+        _, _, err, calls = self.ctmux("s1", script=self.dst, XDG_CACHE_HOME=cache)
+        self.assertEqual(err, "")
+        self.assertEqual(calls[1][2:], created("s1", self.cwd, "/bin/zsh", root))
+
+    def test_claude_and_codex_installs_win_over_an_opencode_install(self):
+        self.install()
+        self.opencode_install("9.0.0")
+        plugin(os.path.join(self.codex, "0.5.0"))
+        _, _, _, calls = self.ctmux("s1", script=self.dst)
+        self.assertEqual(
+            calls[1][2:], created("s1", self.cwd, "/bin/zsh", os.path.join(self.codex, "0.5.0"))
+        )
+        record(self.home, root := plugin(os.path.join(self.home, "cache", "0.4.0")))
+        _, _, _, calls = self.ctmux("s1", script=self.dst)
+        self.assertEqual(calls[1][2:], created("s1", self.cwd, "/bin/zsh", root))
+
     def test_a_launcher_passes_its_arguments_stdin_and_status(self):
         self.install()
         root = os.path.join(self.home, "cache", "0.5.0")
@@ -327,6 +374,7 @@ class FakeTmux(Case):
         self.assertEqual((out, calls), ("", []))
         self.assertIn(os.path.join(self.home, ".claude", "plugins", "installed_plugins.json"), err)
         self.assertIn(self.codex, err)
+        self.assertIn(self.opencode, err)
 
     def test_an_install_failure_exits_nonzero_without_a_path(self):
         os.rmdir(self.agent_pm)

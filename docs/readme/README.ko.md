@@ -10,7 +10,7 @@
 
 *이 문서는 번역본입니다. 공식 버전은 영어 README입니다.*
 
-Linear 보드에서 코딩 에이전트(Claude Code, Codex, 호스트 Ollama 모델로 도는 OpenCode)를 무인으로 실행합니다. 각 Linear project는 하나의 제품이고, issue의 assignee(role 계정)가 그 단계입니다. 각 role은 한 번에 최대 `max_runs`개의 issue를 처리하고 결과물을 검토하도록 돌려줍니다. 승인하면 다음 role이 이어받습니다.
+Linear 보드 또는 Markdown issue 파일로 구성된 로컬 보드에서 코딩 에이전트(Claude Code, Codex, 호스트 Ollama 모델로 도는 OpenCode)를 무인으로 실행합니다. Orchestrator는 교체 가능한 Tracker 인터페이스로 issue를 읽고 쓰며, `[orchestrator] tracker`로 `local`(기본값) 또는 `linear`를 선택합니다. workflow 파일이 단계와 담당 role을 정의합니다. 각 role은 한 번에 최대 `max_runs`개의 issue를 처리하고 결과물을 검토하도록 돌려줍니다. 승인하면 다음 role이 이어받습니다.
 
 개발자: [`AGENTS.md`](../../AGENTS.md).
 
@@ -18,23 +18,23 @@ Linear 보드에서 코딩 에이전트(Claude Code, Codex, 호스트 Ollama 모
 flowchart LR
     R["researcher<br>deep-research, research, light-research"] -->|"report → Approve → promote"| P["pm<br>product-design"]
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
-    T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
+    T[agent-pm-orchestrator router] -.->|claims ready issues| R & P & E
 ```
 
 ## 레이어 구조
 
-agent-pm은 레이어로 구성되며, 각 레이어는 한 가지 일만 하고 바로 아래 레이어만 호출합니다. 아래 두 레이어인 Session과 Delegate는 단독으로 쓸 수 있는 범용 구성 요소이고, 맨 위는 바꿀 수 있어 Linear orchestrator 대신 자신의 워크플로를 둘 수 있습니다. 확장할 때는 새 에이전트 client를 Session에, 새 role과 task를 Delegate에 추가합니다.
+agent-pm은 레이어로 구성되며, 각 레이어는 한 가지 일만 하고 바로 아래 레이어만 호출합니다. 아래 두 레이어인 Session과 Delegate는 단독으로 쓸 수 있는 범용 구성 요소이며, 그 위에 자체 오케스트레이션을 만들 수도 있습니다. Orchestrator에서는 workflow 파일로 단계를 바꾸고 Tracker 인터페이스를 구현해 다른 보드에 연결합니다. 확장할 때는 새 에이전트 client를 Session에, 새 role과 task를 Delegate에 추가합니다.
 
-![agent-pm 레이어(위에서 아래로): Manager(사용자 인터페이스), Linear orchestrator(오케스트레이션), Delegate(role 레이어), Session(client 어댑터)](../images/layers.svg)
+![agent-pm 레이어(위에서 아래로): Manager(사용자 인터페이스), Orchestrator(오케스트레이션, Linear 및 로컬 보드 tracker), Delegate(role 레이어), Session(client 어댑터)](../images/layers.svg)
 
 | 레이어 | 하는 일 | 시작점 |
 |---|---|---|
 | Manager | 아래 레이어들의 드라이버. 대화하는 에이전트로, worker, role run, 보드 run을 시작하고 감시하며 보고합니다. | [데모](#데모-manager-하나-worker-여럿) |
-| Linear orchestrator | Linear 보드에서 role을 실행합니다. 제 워크플로입니다. | [Linear 보드](../board.md) |
+| Orchestrator | workflow 파일에 따라 role을 실행하고, 교체 가능한 tracker로 Linear 또는 로컬 Markdown 보드에 연결합니다. | [보드](../board.md) |
 | Delegate (코어) | session을 통해 role이 하나의 task를 실행하게 하고, 검사된 결과를 돌려줍니다. 단독으로도 쓸 수 있는 Claude Code 및 Codex 플러그인입니다. | [설치](#설치) |
 | Session | tmux 또는 Docker 컨테이너에서 코딩 에이전트(Claude Code, Codex, OpenCode)를 시작, 감시, 재개합니다. 모든 client에서 같은 방식입니다. | [Sessions](../sessions.md) |
 
-Linear orchestrator는 에이전트가 어떻게 일해야 하는지에 대한 제 철학입니다(리서치, PRD, 빌드 순으로, 각 단계 사이에 사람의 검토). role과 task 자체도 직접 편집할 수 있습니다([role과 task 사용자 지정](../customizing-roles-and-tasks.md)).
+기본 workflow는 에이전트가 어떻게 일해야 하는지에 대한 제 철학입니다(리서치, PRD, 빌드 순으로, 각 단계 사이에 사람의 검토). `[orchestrator] workflow`로 다른 workflow 파일을 선택하며, 빈 값이면 기본 파일을 사용합니다. role과 task 자체도 직접 편집할 수 있습니다([role과 task 사용자 지정](../customizing-roles-and-tasks.md)).
 
 ## 왜 agent-pm인가
 
@@ -56,7 +56,7 @@ Linear orchestrator는 에이전트가 어떻게 일해야 하는지에 대한 �
 | 4. Orchestrate | loop engineering | 여러 agent: fan-out, planner와 verifier, 라우팅, 동시 실행과 quota 한도. |
 | 5. Master | environment engineering | 가드레일과 agent-oriented 환경: 사람이 아니라 agent를 위해 만든 도구, 검사, 검증으로 가장 쉬운 길이 곧 옳은 길이 되게 하기(Lauren Tan의 생각). |
 
-아직 level 3이 아니라고요? [autopilot](https://github.com/ophis/claude-autopilot)을 써 보세요. 적어도 거기까지는 데려다줍니다. agent-pm의 레이어(맨 위 표)는 더 올라갑니다. Session은 agent의 대화를 돌리고 손을 쓸 host를 줍니다(level 1–2). Delegate는 role 하나를 task 하나에 검사가 붙은 workflow로 돌립니다(3). Linear orchestrator와 그 위의 manager는 여러 agent를 조율합니다(4와 5 사이). 여기에 당신이 맨 위에서 환경, 경계, 관문을 정하면 Master가 됩니다. 다만 agent-pm의 검증은 아직 조금 부족합니다. 목표는 level 5, 그리고 그 너머입니다.
+아직 level 3이 아니라고요? [autopilot](https://github.com/ophis/claude-autopilot)을 써 보세요. 적어도 거기까지는 데려다줍니다. agent-pm의 레이어(맨 위 표)는 더 올라갑니다. Session은 agent의 대화를 돌리고 손을 쓸 host를 줍니다(level 1–2). Delegate는 role 하나를 task 하나에 검사가 붙은 workflow로 돌립니다(3). Orchestrator와 그 위의 manager는 여러 agent를 조율합니다(4와 5 사이). 여기에 당신이 맨 위에서 환경, 경계, 관문을 정하면 Master가 됩니다. 다만 agent-pm의 검증은 아직 조금 부족합니다. 목표는 level 5, 그리고 그 너머입니다.
 
 ## 데모: manager 하나, worker 여럿
 
@@ -83,7 +83,7 @@ Linear orchestrator는 에이전트가 어떻게 일해야 하는지에 대한 �
 | 요구 사항 | 용도 |
 |---|---|
 | `claude` CLI, Python 3.11+ | 모든 에이전트 run |
-| [`autopilot`](https://github.com/ophis/claude-autopilot) 플러그인, 각 client에: Claude Code는 `/plugin marketplace add ophis/claude-autopilot`, 다음 `/plugin install autopilot@claude-autopilot`; Codex는 `codex plugin marketplace add ophis/claude-autopilot`, 다음 `codex plugin add autopilot@claude-autopilot` | engineer의 build task(`/autopilot:build`, `/autopilot:light-build`)와 PM의 PRD 리뷰(`/autopilot:review`). 그 외에는 필요 없음. |
+| [`autopilot`](https://github.com/ophis/claude-autopilot) 플러그인, host worker의 client에: Claude Code는 `/plugin marketplace add ophis/claude-autopilot`, 다음 `/plugin install autopilot@claude-autopilot`; Codex는 `codex plugin marketplace add ophis/claude-autopilot`, 다음 `codex plugin add autopilot@claude-autopilot`. Docker worker는 이미지 안에 독립적으로 설치합니다([플러그인](../docker-host.md#plugins)). | engineer의 build task(`/autopilot:build`, `/autopilot:light-build`)와 PM의 PRD 리뷰(`/autopilot:review`). 그 외에는 필요 없음. |
 | tmux 3.3+ | `tmux` Host의 tui run |
 | `127.0.0.1`에서만 듣고 컨텍스트 길이 65536 이상, tier 모델을 pull한 [Ollama](https://ollama.com); `tmux`에서는 OpenCode 1.x도(`npm install -g opencode-ai@1.19.3`) | OpenCode만([Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)) |
 | `git`, 로그인된 `gh` | 코딩(checkout, pull request)과 GitHub 대상. 그 외에는 필요 없음. |
@@ -94,10 +94,10 @@ agent-pm이 시작하는 session이 당신의 설정을 어떻게 불러오는�
 
 | 명령 | 하는 일 |
 |---|---|
-| `ctmux <name>` | commander의 tmux session을 엽니다. iTerm2에서는 네이티브 창, 다른 터미널에서는 일반 tmux attach, tmux 안에서는 전환입니다. `ctmux --install`은 ctmux와 네 명령 `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate`, `agent-pm-linear`를 `~/.agent-pm/bin/`에 둡니다. 그 경로로 실행하거나 `PATH`에 추가하세요. 각 명령은 실행 시점에 설치된 플러그인(Claude Code 설치를 먼저, 그다음 Codex의 최신 설치)에서 실행되므로 업그레이드 후 재설치가 필요 없습니다. `--install`을 다시 실행하면 갱신됩니다. |
+| `ctmux <name>` | commander의 tmux session을 엽니다. iTerm2에서는 네이티브 창, 다른 터미널에서는 일반 tmux attach, tmux 안에서는 전환입니다. `ctmux --install`은 ctmux와 네 명령 `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate`, `agent-pm-orchestrator`를 `~/.agent-pm/bin/`에 둡니다. 그 경로로 실행하거나 `PATH`에 추가하세요. 각 명령은 실행 시점에 설치된 플러그인(Claude Code 설치를 먼저, 그다음 Codex의 최신 설치)에서 실행되므로 업그레이드 후 재설치가 필요 없습니다. `--install`을 다시 실행하면 갱신됩니다. |
 | `/agent-pm:manage` | commander의 가이드라인에 따라 worker, role run, pipeline run을 시작하고 지시합니다. |
 | `/agent-pm:act-as <role>[:<task>] <input>` | 이 대화에서 코어 role을 실행합니다. |
-| `/agent-pm:linear` | 고정된 `agent-pm-linear issue` 명령으로 Linear issue를 읽고, 찾고, 만들고, 바꿉니다. |
+| `/agent-pm:board` | 고정된 `agent-pm-orchestrator issue` 명령으로 보드의 issue를 읽고, 찾고, 만들고, 편집하고, 옮기고, 보관합니다. |
 | `agent-pm-delegate run --list` | 모든 role과 task를 나열합니다. |
 
 ## 빠른 시작
@@ -105,7 +105,7 @@ agent-pm이 시작하는 session이 당신의 설정을 어떻게 불러오는�
 1. 플러그인을 [설치](#설치)합니다.
 2. 새 Claude Code session에서 확인합니다: `/agent-pm:act-as dummy-tester:echo hello`가 `hello`를 출력합니다.
 3. role을 실행합니다: `/agent-pm:act-as researcher <question>`. 로컬 설정이 없으면 보고서는 `~/.agent-pm/adhoc/<date>-researcher-<name>/agent/prompt.md`에 저장됩니다. 대신 게시하려면 role의 destination을 설정하세요([role과 task 사용자 지정](../customizing-roles-and-tasks.md#change-a-roles-run-settings)).
-4. Linear에서 role을 실행하려면: [Linear 보드](../board.md).
+4. Linear 또는 로컬 Markdown 보드에서 role을 실행하려면: [보드](../board.md).
 
 ## role과 task 사용자 지정
 
@@ -122,9 +122,8 @@ agent-pm이 시작하는 session이 당신의 설정을 어떻게 불러오는�
 | 페이지 | 내용 |
 |---|---|
 | [Customizing roles and tasks](../customizing-roles-and-tasks.md) | 실행 설정, team 디렉터리, role과 task 파일, 검사 |
-| [Linear board](../board.md) | 설정, issue 상태와 task 라벨, router 운영, Agent 라벨(issue별 client) |
+| [Board](../board.md) | 설정, issue 상태와 task 라벨, router 운영, Agent 라벨(issue별 client), 로컬 보드(`tracker`, `AGENT_PM_BOARD_DIR`, 구조, 파일 형식) |
 | [Sessions and client policy](../sessions.md) | session 설정, `agent-pm-session`, role run의 client 플래그, OpenCode session |
-| [State root](../state-root.md) | `~/.agent-pm/` 구조, 각 항목을 정리하는 주체, 삭제해도 되는 것 |
 | [Upgrading](../upgrading.md) | v0.6.20부터의 업그레이드 단계 |
 | [Core architecture](../architecture.md) | 레이어와 패키지(개발자) |
 | [Tests](../tests.md) | lint, 테스트 스위트, 커버리지, 로컬 모델로 판정할 수 있는 실기 테스트(개발자) |

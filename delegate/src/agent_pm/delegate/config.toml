@@ -48,7 +48,7 @@
 #                   files (by real path) or anything in its tools/ tree (links followed) overlap the workdir, the
 #                   cwd, a write dir, another dir the run adds to write or a dir the client can write (Codex: its
 #                   CODEX_HOME) (delegate/src/agent_pm/delegate/engine/plan.py)
-#   templates, read, write, commands, gate  as in Roles below, for a role that does not set its own; [] or "" → none
+#   templates, read, write, commands  as in Roles below, for a role that does not set its own; [] → none
 tier = 2
 effort = "high"
 client = "claude"
@@ -57,7 +57,6 @@ templates = []
 read = []
 write = []
 commands = []
-gate = ""
 cwd = ""
 idle_timeout = 7200
 show = ""
@@ -117,8 +116,7 @@ host = ""
 #                 they are approved. {{workdir}} is <workdir>/agent, {{team}} core's team/ dir, {{role_team}}
 #                 as in read; a word holding one is shell-quoted once filled, and a prompt text writing the command
 #                 with <Workdir>, <team> or <role team> gets it as approved when that quoting changed it; [] → none
-#   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
-#                 round); its approval follows the Client; "" → none (the orchestrator's overlay sets it)
+# A caller may supply a costly-step brake at runtime; it has no configuration key here.
 #   <run key>     tier, effort, client, language, cwd, idle_timeout, show or [output], for that role
 #   accounts      [roles.<role>.accounts]: [accounts] above, for that role, entry by entry
 

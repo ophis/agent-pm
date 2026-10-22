@@ -86,6 +86,50 @@ class Run(unittest.TestCase):
 
 
 class Discovery(unittest.TestCase):
+    def test_directory_shards_keep_selection_complete_and_disjoint(self):
+        cases = [unittest.FunctionTestCase(lambda: None, description=str(i)) for i in range(7)]
+        for i, case in enumerate(cases):
+            case.id = lambda i=i: f"example.Case.test_{i}"
+        selected, executed = [], []
+
+        def select(_root, selectors):
+            selected.append(selectors)
+            return unittest.TestSuite(cases), []
+
+        def run(suite, _title):
+            executed.extend(test.id() for test in runner.tests(suite))
+            return 0
+
+        with (
+            mock.patch.object(runner, "supervise", return_value=None),
+            mock.patch.object(runner.isolation, "install"),
+            mock.patch.object(runner, "GATE"),
+            mock.patch.object(runner, "select", side_effect=select),
+            mock.patch.object(runner, "run", side_effect=run),
+        ):
+            for number in range(1, 4):
+                self.assertEqual(
+                    runner.main(["Repository", "tests/integration", "--shard", f"{number}/3"]),
+                    0,
+                )
+        self.assertEqual(selected, [["tests/integration"]] * 3)
+        self.assertCountEqual(executed, [case.id() for case in cases])
+
+    def test_sharding_preserves_the_selected_suite_isolation_mode(self):
+        for normalized in (False, True):
+            root, path, _module = self.selection_fixture(normalized=normalized)
+            gate = mock.Mock()
+            with (
+                mock.patch.object(runner, "supervise", return_value=None),
+                mock.patch.object(runner.isolation, "install", return_value=gate),
+                mock.patch.object(runner, "GATE"),
+                mock.patch.object(runner.Path, "cwd", return_value=root),
+                mock.patch.object(runner, "run", return_value=0) as run,
+            ):
+                self.assertEqual(runner.main(["Selected", str(path.parent), "--shard", "1/2"]), 0)
+                self.assertEqual(run.call_args.args[0].countTestCases(), 1)
+                self.assertEqual((gate.unit_only, gate.unit), (not normalized, not normalized))
+
     def test_parallel_unit_jobs_cover_the_same_shards_without_supervising_the_coordinator(self):
         commands = []
 
@@ -199,7 +243,7 @@ class Discovery(unittest.TestCase):
     def test_top_level_preserves_project_packages_and_normalized_tests(self):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         regular = root / "session/tests/unit"
-        normalized = root / "linear-orchestrator/tests/orchestrator_tests/unit"
+        normalized = root / "orchestrator/tests/orchestrator_tests/unit"
         for path in (regular, normalized):
             path.mkdir(parents=True)
             (path / "__init__.py").touch()

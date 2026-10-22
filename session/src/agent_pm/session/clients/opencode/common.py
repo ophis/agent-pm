@@ -32,6 +32,7 @@ from agent_pm.session.engine.types import (
     Effort,
     Launch,
     Permission,
+    ProviderProbe,
     Resumable,
     SessionStatus,
     Spec,
@@ -50,7 +51,9 @@ from agent_pm.utils import (
 
 TABLE = "[clients.opencode]"
 # A container Host's session state dir: OpenCode keeps opencode.db under $XDG_DATA_HOME/opencode.
-HOME = ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none")
+# min_width: OpenCode 1.19.3's OpenTUI 0.4.5 crashes its home screen under 38 columns on Linux;
+# fixed in OpenTUI 0.5.3 (anomalyco/opentui#1361).
+HOME = ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none", min_width=40)
 HERE = os.path.dirname(os.path.abspath(__file__))
 STORE = f"{STATE}/sessions/opencode"  # under HOME, resolved per call
 BINDING_KEYS = frozenset({"version", "cwd", "sid", "native"})
@@ -110,7 +113,6 @@ OLLAMA = "ollama"
 SECRETS = "secrets/opencode"  # the broker's key files, under a container's state root
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 WORD = re.compile(r"\S+")
-URL = re.compile(r"https?://\S+")
 
 
 def _window(value) -> bool:
@@ -126,7 +128,7 @@ def _provider(name, table) -> bool:
         and set(table) - {"context"} == {"base_url", "models"}
         and _window(table.get("context", OLLAMA_CONTEXT))
         and isinstance(table["base_url"], str)
-        and URL.fullmatch(table["base_url"]) is not None
+        and probe.valid_url(table["base_url"])
         and strings(table["models"])
         and all(WORD.fullmatch(m) and m.isprintable() for m in table["models"])
     )
@@ -369,9 +371,7 @@ class OpenCodeCommon:
         return exe
 
     def inline(self, spec: Spec, context: ClientContext, plugin: str | None = None) -> dict:
-        """The launch's OpenCode config: only ollama on the context's host address and the
-        configured providers enabled, no auto-update, shell calls asking but pre-approved commands,
-        Access dirs and reads outside the cwd, edit_rules. A provider's API key: a container's
+        """The launch's providers, permissions and plugin. A provider's API key: the container's
         broker-written file, else OpenCode's auth.json.
         """
         access = spec.access
@@ -386,6 +386,12 @@ class OpenCodeCommon:
                 pattern: "allow" for d in outside for pattern in (d, f"{d}/*")
             }
         permission["edit"] = edit_rules(os.path.realpath(access.cwd), dirs, reads)
+        if context.permission is Permission.YOLO:
+            # --auto replies in the TUI after permission.asked; approve at the backend so the
+            # plugin never reports those transient asks as blocked. Keep agent and edit denies.
+            permission.update(
+                dict.fromkeys(("bash", "read", "external_directory", "doom_loop"), "allow")
+            )
         ollama = f"http://{context.host_address}:{self.port}/v1"
         providers = {
             OLLAMA: self._provider("Ollama", ollama, OLLAMA, (), self.ollama_context),
@@ -407,6 +413,7 @@ class OpenCodeCommon:
         return {
             "$schema": "https://opencode.ai/config.json",
             **({"plugin": [plugin]} if plugin is not None else {}),
+            **({"skills": {"paths": ["/opt/agent-pm/plugins"]}} if context.container else {}),
             "autoupdate": False,
             # A refused call ends OpenCode's turn otherwise (session/processor.ts).
             "experimental": {"continue_loop_on_deny": True},
@@ -450,10 +457,24 @@ class OpenCodeCommon:
         env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
         return env
 
+    def usage_provider(self) -> ProviderProbe | None:
+        provider = self.model(None).partition("/")[0]
+        return (
+            None
+            if provider == OLLAMA
+            else ProviderProbe(provider, self.providers[provider]["base_url"])
+        )
+
     def probe(self) -> Launch:
         """On this machine, so the loopback, never the Host's address."""
+        request = self.usage_provider()
+        args = (
+            (str(self.port),)
+            if request is None
+            else ("--provider", request.provider, request.base_url)
+        )
         return Launch(
-            (os.path.realpath(sys.executable), "-I", probe.__file__, str(self.port)),
+            (os.path.realpath(sys.executable), "-I", probe.__file__, *args),
             env={k: v for k, v in self.env.items() if k not in LOCAL_ENV_VARS},
             unset=UNSET,
         )
@@ -466,6 +487,8 @@ class OpenCodeCommon:
         except (ValueError, RecursionError):
             return None
         if isinstance(found, dict) and isinstance(found.get("models"), list):
+            return Usage(None, None)
+        if isinstance(found, dict) and set(found) == {"available"} and found["available"] is True:
             return Usage(None, None)
         return None
 

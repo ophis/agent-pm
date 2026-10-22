@@ -14,9 +14,11 @@ delete process.env.AGENT_PM_OPENCODE_SESSION;
 const children = new Set();
 const seen = new Set();
 const TOOL = new Set(["running", "completed", "error"]);
-const REPLY_WAIT = 5000; // ms an idle waits for its turn's final message to be saved
+const REPLY_WAIT = 5000; // ms to wait for completed messages to be saved
 const REPLY_POLL = 200;
 let turnUser = null; // the root's latest user message id
+let reported = new Set(); // text messages delivered in this user turn; busy steps do not reset it
+let completed = new Set(); // completion events can precede the corresponding API records
 let busy = false;
 let failed = false;
 let started = false;
@@ -49,10 +51,8 @@ function run(label, payload) {
 }
 
 function call(label, fields = {}) {
-  // fields (or its promise) is taken when the event comes, not when the call's turn does.
-  const session = root;
-  const extra = Promise.resolve(fields).catch(() => ({}));
-  chain = chain.then(async () => run(label, { session_id: session, ...(await extra) }));
+  const payload = { session_id: root, ...fields };
+  chain = chain.then(() => run(label, payload));
 }
 
 function texts(message) {
@@ -72,21 +72,41 @@ function slice(list, user) {
   return end < 0 ? rest : rest.slice(0, end);
 }
 
-// The turn's newest assistant text, read until its last assistant message is saved: completed
-// with text, or failed. An idle can come before that save; after REPLY_WAIT, the best found.
-async function reply(client, user) {
+// Deliver completed main-thread messages before idle, including saves found by idle's poll.
+// The queue captures the session, user and dedupe set so a later turn cannot overtake this one.
+function report(client, ending) {
+  const session = root, user = turnUser, sent = reported, known = completed;
+  chain = chain.then(async () => {
+    const last = await reply(client, session, user, sent, known, ending);
+    if (ending) await run("session.idle", { session_id: session, last_assistant_message: last });
+  });
+}
+
+// Idle can precede the final save. Until REPLY_WAIT, keep its existing newest-text fallback.
+async function reply(client, session, user, sent, known, ending) {
   const until = Date.now() + REPLY_WAIT;
   let best = "";
   for (;;) {
     try {
-      const found = await client.session.messages({ path: { id: root } });
+      const found = await client.session.messages({ path: { id: session } });
       const list = Array.isArray(found) ? found : found?.data;
       const turn = Array.isArray(list) ? slice(list, user) : null;
-      const answers = (turn ?? []).filter((m) => m?.info?.role === "assistant");
+      const answers = (turn ?? []).filter((m) => m?.info?.sessionID === session && m.info.role === "assistant");
       best = answers.map(texts).findLast((t) => t.trim()) ?? best;
       const last = answers.at(-1);
       const saved = typeof last?.info?.time?.completed === "number" && texts(last).trim();
-      if (turn && last && (saved || last.info.error != null)) return best;
+      const ready = [...known].every((id) => answers.some((m) => m.info.id === id &&
+        (typeof m.info.time?.completed === "number" || m.info.error != null)));
+      // Wait for missing earlier messages too, so a saved final cannot overtake them.
+      if (ready || Date.now() >= until) {
+        for (const message of answers) {
+          const id = message.info.id, text = texts(message);
+          if (!id || sent.has(id) || typeof message.info.time?.completed !== "number" || !text.trim()) continue;
+          sent.add(id);
+          await run("message.completed", { session_id: session, text });
+        }
+        if (!ending || (turn && last && (saved || last.info.error != null))) return best;
+      }
     } catch {} // a failed read is one more try, not the reply
     if (Date.now() >= until) return best;
     await new Promise((resolve) => setTimeout(resolve, REPLY_POLL));
@@ -123,8 +143,7 @@ function handle(event, client) {
       busy = false;
       // A fatal error's turn idles twice (its halt, then its run's end); only a busy clears it.
       if (failed) return;
-      const text = reply(client, turnUser);
-      call("session.idle", text.then((last) => ({ last_assistant_message: last })));
+      report(client, true);
       return;
     }
     case "session.error":
@@ -151,9 +170,19 @@ function handle(event, client) {
       if (!owned(p.sessionID)) return;
       call(event.type);
       return;
-    case "message.updated":
-      if (p.sessionID === root && p.info?.role === "user" && p.info.id) turnUser = p.info.id;
+    case "message.updated": {
+      const info = p.info ?? {};
+      if (info.sessionID !== root) return;
+      if (info.role === "user" && info.id && info.id !== turnUser) {
+        turnUser = info.id;
+        reported = new Set();
+        completed = new Set();
+      } else if (info.role === "assistant" && info.id && typeof info.time?.completed === "number") {
+        completed.add(info.id);
+        report(client, false);
+      }
       return;
+    }
     case "message.part.updated": {
       const part = p.part ?? {};
       const status = part.state?.status;

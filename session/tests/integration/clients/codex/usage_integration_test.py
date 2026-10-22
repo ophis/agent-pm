@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.clients.codex import CodexClient
-from agent_pm.session.engine.types import Usage, Window
+from agent_pm.session.engine.types import ConfigError, Usage, Window
 
 from session.tests.case import REPO, Case
 from session.tests.integration.clients.codex import fake_app_server
@@ -110,7 +110,8 @@ class UsageIntegrationTest(Case):
                 self.log.unlink(missing_ok=True)
                 self.assertEqual(self.probe(case), expected)
         self.log.unlink(missing_ok=True)
-        self.assertIsNone(self.probe(PATH=str(self.work)))
+        with self.assertRaisesRegex(ConfigError, "missing or not executable"):
+            self.probe(PATH=str(self.work))
         self.assertFalse(self.log.exists())
 
     def test_native_environment_filters_markers_and_keeps_configured_overrides(self):

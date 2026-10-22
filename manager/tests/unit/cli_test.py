@@ -212,7 +212,7 @@ class Launch(CliCase):
             (
                 "issue",
                 "TASK-12",
-                ("agent-pm-linear", "router", "--issue", "TASK-12", "--tui"),
+                ("agent-pm-orchestrator", "router", "--issue", "TASK-12", "--tui"),
                 ("--display", "D", "--note", "belongs to layer", "--manager", "also layer"),
             ),
         ):
@@ -536,6 +536,19 @@ class NextEventContent(CliCase):
         self.assertEqual(self.next_event("12:00:00 w1 done"), (0, "1 12:00:00 w1 done\n", ""))
         self.assertEqual(self.calls, [])
 
+    def test_follow_exits_nonzero_on_malformed_line_without_echoing_it(self):
+        for invalid in ("", "diagnostic-private-payload"):
+            with (
+                self.subTest(invalid=invalid),
+                mock.patch("time.sleep", side_effect=TimeoutError("polled past malformed line")),
+            ):
+                code, stdout, stderr = self.next_event(invalid, "--follow")
+                self.assertEqual(code, 1)
+                self.assertEqual(stdout, "")
+                self.assertIn(f"{self.roster.events_path}: invalid event at line 1", stderr)
+                self.assertNotIn("diagnostic-private-payload", stderr)
+                self.assertEqual(self.roster.backlog()[0], 0)
+
     def test_each_event_uses_its_owners_ctl_content(self):
         for sessions, event, answer, expected in (
             (("w1",), "w1 done", "the answer\n", "the answer\n"),
@@ -621,7 +634,7 @@ class NextEventContent(CliCase):
 
     def test_follow_prints_each_event_block_and_keeps_going(self):
         record = self.launched("w1")
-        Path(self.roster.events).write_text("12:00:00 w1 done\nnoise\n12:00:01 w1 blocked\n")
+        Path(self.roster.events).write_text("12:00:00 w1 done\n12:00:01 w1 blocked\n")
         stdout = io.StringIO()
         writes = []
         stdout.write = lambda text: writes.append(text) or len(text)
@@ -646,12 +659,12 @@ class NextEventContent(CliCase):
             [text for text in writes if text],
             [
                 "1 12:00:00 w1 done\nthe answer\nline 2\n",
-                f"3 12:00:01 w1 blocked\ncontent unavailable: {ctl.COMMAND} content: "
+                f"2 12:00:01 w1 blocked\ncontent unavailable: {ctl.COMMAND} content: "
                 "no such session\n",
             ],
         )
         self.assertEqual(self.roster.backlog()[0], 0)
-        self.assertEqual(len(self.roster.backlog()[2]), 3)
+        self.assertEqual(len(self.roster.backlog()[2]), 2)
 
     def test_read_and_pending_retain_events_until_explicit_ack(self):
         self.launched("w1")
@@ -1049,14 +1062,14 @@ class Report(CliCase):
         pipeline = replace(
             self.delegate_record("TASK-12"),
             kind="pipeline",
-            ctl=("agent-pm-linear",),
-            resume=("agent-pm-linear", "resume", "TASK-12"),
+            ctl=("agent-pm-orchestrator",),
+            resume=("agent-pm-orchestrator", "resume", "TASK-12"),
         )
         self.launched("TASK-12", record=pipeline, alive=False, outcome="done")
         result, stdout, stderr = self.report()
         self.assertEqual((result, stderr), (0, ""))
         self.assertIn("\tpipeline\tdone\t", stdout)
-        self.assertNotIn(("agent-pm-linear", "outcome"), self.calls)
+        self.assertNotIn(("agent-pm-orchestrator", "outcome"), self.calls)
 
     def test_status_gh_and_outcome_failures_go_to_stderr_and_exit_0(self):
         self.launched("bad-gh", note=URL)
@@ -1266,7 +1279,7 @@ class HelpContracts(Case):
         for verb, owner in (
             ("worker", "agent-pm-session start --help"),
             ("reopen", "agent-pm-session start --help"),
-            ("issue", "agent-pm-linear router --help"),
+            ("issue", "agent-pm-orchestrator router --help"),
             ("role", "agent-pm-delegate run --help"),
         ):
             with self.subTest(verb=verb):

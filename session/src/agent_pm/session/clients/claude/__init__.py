@@ -57,6 +57,9 @@ class ClaudeClient(Client):
     def usage_probe(self):
         return self.common.probe()
 
+    def _usage_executable(self, *, container=False):
+        return "claude"
+
     def _usage_probes(self):
         accounts = self.common.accounts
         return {name: (accounts[name].dir, self.common.probe(name)) for name in accounts}

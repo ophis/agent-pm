@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -386,18 +388,47 @@ func (c Codex) Ready(ctx context.Context) error {
 	return c.containerAuth(ctx, func(codexAuthDocument, time.Time) error { return nil })
 }
 
-func (c Codex) Inject(ctx context.Context, exec func([]string, []byte) error) (string, error) {
-	return c.inject(ctx, exec, nil)
+// codexWriterMessages are bootstrap.py's fixed codex-auth exit messages. The writer runs in the untrusted container,
+// so writerCause passes on only these, or a write failure's errno text.
+var (
+	codexWriterMessages = []string{
+		"bootstrap: invalid Codex home",
+		"bootstrap: CODEX_HOME does not match the manifest",
+		"bootstrap: invalid managed Codex credentials",
+		"bootstrap: managed Codex secret directory is a link",
+		"bootstrap: CODEX_HOME/auth.json links elsewhere",
+		"bootstrap: CODEX_HOME/auth.json is not a regular file",
+		"bootstrap: managed Codex credential is not a regular file",
+		"bootstrap: existing Codex credentials are unreadable",
+		"bootstrap: existing Codex credentials belong to another account",
+	}
+	codexWriteFailure = regexp.MustCompile(`^bootstrap: cannot write managed Codex credentials: [A-Za-z '/-]{1,64}$`)
+)
+
+func writerCause(err error) string {
+	var ce *docker.CommandError
+	if !errors.As(err, &ce) {
+		return "credential writer failed"
+	}
+	if line := docker.Diagnostic(err); slices.Contains(codexWriterMessages, line) || codexWriteFailure.MatchString(line) {
+		return line
+	}
+	return fmt.Sprintf("credential writer exited %d without a known diagnostic", ce.Exit)
 }
 
-func (c Codex) inject(ctx context.Context, exec func([]string, []byte) error, publish func(string) error) (string, error) {
+func (c Codex) Inject(ctx context.Context, exec func([]string, []byte) error) (string, error) {
+	return c.inject(ctx, exec, nil, protocol.StartFailed)
+}
+
+// inject writes the access-only credential into the container; failed is the calling command's failure code.
+func (c Codex) inject(ctx context.Context, exec func([]string, []byte) error, publish func(string) error, failed protocol.Code) (string, error) {
 	var expiry string
 	err := c.containerAuth(ctx, func(auth codexAuthDocument, expires time.Time) error {
 		auth.Mode = "chatgpt"
 		auth.Tokens.Refresh = ""
 		data, err := json.Marshal(auth)
 		if err != nil {
-			return protocol.New(protocol.StartFailed, "Cannot encode Codex container credentials")
+			return protocol.New(failed, "Cannot encode Codex container credentials")
 		}
 		defer erase(data)
 		err = exec([]string{launcher.Python, "-I", launcher.Bootstrap, "codex-auth"}, data)
@@ -405,7 +436,9 @@ func (c Codex) inject(ctx context.Context, exec func([]string, []byte) error, pu
 			return docker.ErrUnreachable
 		}
 		if err != nil {
-			return protocol.New(protocol.StartFailed, "Writing Codex credentials into the container failed")
+			e := protocol.New(failed, "Writing Codex credentials into the container failed")
+			e.Cause = writerCause(err)
+			return e
 		}
 		expiry = expires.Format(time.RFC3339)
 		if publish != nil {

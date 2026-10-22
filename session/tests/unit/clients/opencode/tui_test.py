@@ -21,6 +21,7 @@ from agent_pm.session.engine.types import (
     HookKind,
     Launch,
     Permission,
+    Reply,
     Spec,
     TurnEnd,
     TurnFailed,
@@ -169,8 +170,20 @@ class LaunchTest(Base):
         self.assertEqual(launch.transcript, f"{data}/opencode/opencode.db")
         self.assertEqual(self.launch(self.spec()).transcript, "")
 
+    def test_yolo_approves_tools_before_the_tui_can_auto_reply(self):
+        access = Access(cwd=self.cwd, commands=("git status",))
+        for context in (DOCKER_CONTEXT, replace(LOCAL_CONTEXT, permission=Permission.YOLO)):
+            with self.subTest(container=context.container is not None):
+                launch = self.launch(self.spec(access=access), context=context)
+                permission = json.loads(launch.env["OPENCODE_CONFIG_CONTENT"])["permission"]
+                for tool in ("bash", "read", "external_directory", "doom_loop"):
+                    self.assertEqual(permission[tool], "allow", tool)
+                self.assertNotIn("*", permission)
+                self.assertEqual(permission["edit"][".git/*"], "deny")
+                self.assertEqual(permission["edit"][".opencode/*"], "deny")
+
     def test_both_modes_name_the_docker_home(self):
-        home = ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none")
+        home = ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none", min_width=40)
         self.assertEqual(self.run_tui()._home(), home)
         headless = self.client.headless()
         assert headless is not None
@@ -292,6 +305,30 @@ class OnHookTest(Base):
 
 
 class EventsTest(Base):
+    def test_completed_replies_are_delivered_and_replayed_before_turn_end(self):
+        records = [
+            ("message.completed", {"session_id": SES, "text": text})
+            for text in ("[agent-pm-progress:start] working", "intermediate", "done")
+        ]
+        records.append(("session.idle", {"session_id": SES, "last_assistant_message": "done"}))
+        expected = [
+            ClientBound(SES),
+            Reply("[agent-pm-progress:start] working"),
+            Reply("intermediate"),
+            Reply("done"),
+            TurnEnd("done"),
+        ]
+        self.assertEqual(self.run_tui().replay(records), expected)
+
+    def test_empty_or_invalid_completed_text_is_ignored(self):
+        run = self.run_tui()
+        run.hook_events(tui.START, {"session_id": SES})
+        for value in (None, 3, "", " \n "):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    run.hook_events("message.completed", {"session_id": SES, "text": value}), []
+                )
+
     def test_the_hook_labels(self):
         self.assertEqual(
             dict(tui.OpenCodeTui.hooks),

@@ -8,9 +8,11 @@ import io
 import json
 import os
 import re
+import runpy
 import shlex
 import signal
 import stat
+import sys
 import threading
 import time
 import tomllib
@@ -38,7 +40,14 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.hosts.docker.broker import REFRESH, RELAY, BrokerError, client_keys
+from agent_pm.session.hosts.docker.broker import (
+    BROKER,
+    REFRESH,
+    RELAY,
+    Broker,
+    BrokerError,
+    client_keys,
+)
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.host import (
     KEPT_RETRY,
@@ -53,6 +62,7 @@ from agent_pm.session.viewer import display as displays
 from agent_pm.utils import Record, parse_time
 
 from session.tests.case import REPO, Case
+from session.tests.unit.hosts.docker.support import FakeBroker as BrokerRunner
 from session.tests.unit.hosts.docker.support import data
 from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
@@ -142,6 +152,12 @@ class FakeBroker:
         self.order.append("version")
         if "version" in self.failing:
             raise self.failing["version"]
+
+    def probe_provider(self, provider, base_url):
+        self.order.append(("probe", provider, base_url))
+        if "probe-provider" in self.failing:
+            raise self.failing["probe-provider"]
+        return True
 
     def build(self, package, *, plugins=(), max_age=None):
         self.order.append(("build", package))
@@ -296,6 +312,55 @@ def _free(path):
 
 
 class ConfigTest(Base):
+    def test_provider_usage_rejects_broker_18_before_probing_credentials(self):
+        request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+        locked = data("error-login_required.json")
+        locked["error"].update(
+            command="probe-provider", message="secret-store agent-pm-opencode: keychain locked"
+        )
+        runner = BrokerRunner(
+            (0, '{"protocol_version":"18"}\n', ""),
+            (5, "", json.dumps(locked)),
+        )
+        self.host.broker = Broker(runner)
+        with self.assertRaisesRegex(SessionError, "protocol '18', want '19'") as caught:
+            self.host._provider_usage(request)
+        self.assertIn(
+            "install or upgrade it: see docs/docker-host.md#install", str(caught.exception)
+        )
+        self.assertEqual(runner.calls, [[BROKER, "version"]])
+        self.assertEqual(len(runner.results), 1)
+
+    def test_provider_usage_checks_protocol_and_uses_the_broker(self):
+        request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+        self.assertTrue(self.host._provider_usage(request))
+        self.assertEqual(self.order, ["version", ("probe", "strata", "https://strata.test/v1")])
+        self.broker.failing["version"] = SessionError("upgrade broker")
+        with self.assertRaisesRegex(SessionError, "upgrade broker"):
+            self.host._provider_usage(request)
+
+    def test_provider_usage_preserves_host_credential_failures(self):
+        request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+        for exit_code, code, message in (
+            (11, "keychain_failed", "secret-store agent-pm-strata: keychain locked"),
+            (11, "keychain_failed", "secret-store agent-pm-strata: credentials unreadable"),
+        ):
+            with self.subTest(code=code):
+                error = BrokerError(exit_code, code, message, "not_needed", None)
+                self.broker.failing["probe-provider"] = error
+                with self.assertRaises(SessionError) as caught:
+                    self.host._provider_usage(request)
+                self.assertIs(caught.exception, error)
+
+    def test_provider_usage_reports_missing_or_invalid_key_as_client_configuration(self):
+        request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+        for message in ("No API key in agent-pm-opencode", "Invalid API key in agent-pm-opencode"):
+            with self.subTest(message=message):
+                error = BrokerError(5, "login_required", message, "not_needed", None)
+                self.broker.failing["probe-provider"] = error
+                with self.assertRaisesRegex(ConfigError, message):
+                    self.host._provider_usage(request)
+
     def test_the_packaged_table_parses_and_tmux_stays_the_default(self):
         with open(os.path.join(REPO, "session/src/agent_pm/session/config.toml"), "rb") as f:
             table = tomllib.load(f)["hosts"]
@@ -304,9 +369,11 @@ class ConfigTest(Base):
             {
                 "implementation": "agent_pm.session.hosts.docker.host:DockerHost",
                 "docker": "/usr/local/bin/docker",
-                "plugins": ["autopilot"],
+                "plugins": [
+                    "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217"
+                ],
                 "isolated": True,
-                "github": {"app": "agent-pm-bot"},
+                "github": {"app": ""},
             },
         )
         self.assertEqual(Host.parse_hosts(table).default, "tmux")
@@ -314,13 +381,33 @@ class ConfigTest(Base):
         host = DockerHost("docker", settings)
         self.assertEqual(
             (host.docker, host.github, host.plugins, host._isolated),
-            ("/usr/local/bin/docker", "agent-pm-bot", ("autopilot",), True),
+            (
+                "/usr/local/bin/docker",
+                "",
+                ("autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",),
+                True,
+            ),
         )
         bare = DockerHost("docker", {"docker": DOCKER})
         self.assertEqual((bare.github, bare.plugins, bare._isolated), ("", (), False))
         self.assertTrue(DockerHost("docker", {"docker": DOCKER, "isolated": True})._isolated)
-        named = DockerHost("docker", {"docker": DOCKER, "plugins": ["a", "b.c@market_1-x"]})
-        self.assertEqual(named.plugins, ("a", "b.c@market_1-x"))
+        named = DockerHost(
+            "docker",
+            {
+                "docker": DOCKER,
+                "plugins": [
+                    "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                    "b.c@owner/market_1-x#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                ],
+            },
+        )
+        self.assertEqual(
+            named.plugins,
+            (
+                "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                "b.c@owner/market_1-x#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+        )
 
     def test_bad_settings_name_their_key(self):
         for settings, key in (
@@ -346,15 +433,20 @@ class ConfigTest(Base):
             *(
                 (
                     {"docker": DOCKER, "plugins": plugins},
-                    r"^\[hosts.docker\] plugins: want a list of unique plugin names$",
+                    r"^\[hosts.docker\] plugins: want unique name@owner/repo#40-hex-commit sources$",
                 )
                 for plugins in (
-                    "autopilot",
+                    "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
                     ["a", "a"],
                     [1],
                     [["a"]],
                     [""],
                     ["../a"],
+                    ["autopilot"],
+                    ["x@owner/repo"],
+                    ["x@owner/repo#main"],
+                    ["x@owner/repo#" + "a" * 39],
+                    ["x@owner/repo#" + "A" * 40],
                     ["a@"],
                     ["a@b@c"],
                     ["-a"],
@@ -580,9 +672,18 @@ class StartTest(Base):
         self.popen_mock.assert_not_called()
 
     def test_the_build_holds_the_whitelisted_plugins(self):
-        self.host.plugins = ("autopilot", "beta@market")
+        self.host.plugins = (
+            "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+            "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
         self.start()
-        self.assertEqual(self.broker.plugins, ("autopilot", "beta@market"))
+        self.assertEqual(
+            self.broker.plugins,
+            (
+                "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+        )
 
     def test_start_order(self):
         os.makedirs(self.home_dir)
@@ -752,6 +853,30 @@ class StartTest(Base):
         kw = self.popen_mock.call_args.kwargs
         self.assertTrue(kw["start_new_session"])
         self.assertFalse(set(CLEARED) & kw["env"].keys())
+
+    def test_a_min_width_reaches_the_container_tmux(self):
+        for case, width, floored in (("opencode", "40", True), ("claude", None, False)):
+            with self.subTest(case=case):
+                self.order.clear()
+                self.start(home_min_width=width)
+                (new,) = [call for call in self.docker.execs() if "new-session" in call]
+                self.assertEqual("window-size" in new, floored)
+                self.assertEqual("client-resized" in new, floored)
+                if floored:
+                    self.assertGreaterEqual(int(new[new.index("-x") + 1]), 40)
+
+    def test_a_bad_min_width_is_refused_before_a_container(self):
+        for width in ("4x", "-1", ""):
+            with self.subTest(width=width):
+                self.order.clear()
+                with self.assertRaisesRegex(
+                    SessionError, f"docker session w: bad min width {width!r}"
+                ):
+                    self.start(home_min_width=width)
+                self.assertFalse(
+                    [o for o in self.order if isinstance(o, tuple) and o[0] == "start"]
+                )
+                self.popen_mock.assert_not_called()
 
     def test_a_long_prompt_is_staged_whole_off_tmux_s_command_line_on_start_resume_and_codex(self):
         """Restart and resume both start with resume=1; a Claude and a Codex client differ only in
@@ -1651,6 +1776,23 @@ class PreflightTest(Base):
         self.assertEqual(self.broker.max_ages, [REFRESH])
         self.assertFalse(os.path.exists(self.state))
 
+    def test_resume_preflight_builds_with_the_whitelisted_plugins(self):
+        self.host.plugins = (
+            "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+            "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        self.validate()
+        self.assertEqual(self.order, ["version", ("build", REPO)])
+        self.assertEqual(
+            self.broker.plugins,
+            (
+                "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+        )
+        self.assertEqual(self.broker.max_ages, [REFRESH])
+        self.assertFalse(os.path.exists(self.state))
+
     def test_an_argument_over_the_linux_limit_is_refused_before_any_docker_call(self):
         fits, over = "a" * 131_071, "雪" * 43_691  # 131,073 bytes
         self.host.validate("w", Launch(("agent", fits), cwd=self.cwd))
@@ -1872,7 +2014,7 @@ class TerminalTest(Base):
     def test_the_viewers_status_attach_is_the_docker_command(self):
         process = self.terminal()
         self.docker.replies = {("tmux", "display-message"): pane()}
-        want = f"{DOCKER} --host {self.ep} exec -it {CONTAINER} tmux attach -t =w"
+        want = f"{DOCKER} --host {self.ep} exec -it {CONTAINER} tmux attach -t '=w'"
         self.assertIsNone(process.status().attach)
         tmux = mock.create_autospec(TmuxCli, instance=True)
         tmux.runner = mock.Mock()
@@ -1908,9 +2050,9 @@ class CloseTest(Base):
                 ["exec", "-i", CONTAINER, "tmux"],
                 ("signal", 999, signal.SIGTERM),
                 ("close", CONTAINER),
-                ["volume", "ls", "--filter", "label=agent-pm.kind"],
             ],
         )
+        self.assertEqual(self.spawned[-1][0][-2:], [DockerHost.__module__, DOCKER])
         self.assertEqual(self.docker.execs()[0], ["tmux", "has-session", "-t", "=w"])
         self.assertEqual(
             self.docker.execs()[1],
@@ -2053,6 +2195,22 @@ class RecoverTest(Base):
                 os.path.join(REPO, "bin", "agent-pm-session"),
             ],
         )
+
+    def test_supervisor_recovery_checks_the_digest_with_the_whitelisted_plugins(self):
+        self.host.plugins = (
+            "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+            "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        self.host.attach("w")
+        self.assertEqual(
+            self.broker.plugins,
+            (
+                "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+        )
+        self.assertEqual(self.broker.max_ages, [None])
+        self.assertEqual(len(self.spawned), 1)
 
     def test_attach_with_the_lock_held_starts_nothing(self):
         self.live_supervisor()
@@ -2330,16 +2488,82 @@ class ReclaimTest(Base):
         self.assertFalse([step for step in self.order if step[0] == "volume"])
         self.assertEqual(self.removed(), [])
 
-    def test_each_reclaim_checks_at_most_one_volume(self):
+    def test_each_reclaim_checks_all_eligible_volumes(self):
+        self.docker.volumes.append(f"agent-pm-ws-gone\t{self.account}/gone/w")
+        self.host.reclaim()
+        self.assertEqual(self.removed(), [self.GONE, "agent-pm-ws-gone"])
+
+    def test_a_kept_volume_does_not_block_later_volumes(self):
+        self.docker.volumes.append(f"agent-pm-ws-gone\t{self.account}/gone/w")
+        for code in ("workspace_dirty", "workspace_failed"):
+            with self.subTest(code=code):
+                self.order.clear()
+                self.broker.failing = {}
+
+                def remove(volume, code=code):
+                    self.order.append(("workspace_rm", volume))
+                    if volume == self.GONE:
+                        raise BrokerError(12, code, "kept", "not_needed", None)
+                    return True
+
+                self.broker.workspace_rm = remove
+                with self.assertLogs("session", "WARNING"):
+                    self.host.reclaim()
+                self.assertEqual(self.removed(), [self.GONE, "agent-pm-ws-gone"])
+                os.unlink(os.path.join(self.kept, self.GONE))
+
+    def test_a_failed_batch_warns_once_per_volume(self):
         self.docker.volumes.append(f"agent-pm-ws-gone\t{self.account}/gone/w")
         self.broker.failing = {
             "workspace_rm": BrokerError(14, "workspace_failed", "check failed", "not_needed", None)
         }
-        for want in (self.GONE, "agent-pm-ws-gone"):
-            self.order.clear()
-            with self.assertLogs("session", "WARNING"):
-                self.host.reclaim()
-            self.assertEqual(self.removed(), [want])
+        with self.assertLogs("session", "WARNING") as logs:
+            self.host.reclaim()
+        self.assertEqual(self.removed(), [self.GONE, "agent-pm-ws-gone"])
+        self.assertEqual(len(logs.output), 2)
+        self.order.clear()
+        with self.assertNoLogs("session", "WARNING"):
+            self.host.reclaim()
+        self.assertEqual(self.removed(), [])
+
+    def test_background_reclaim_detaches_without_listing_or_waiting(self):
+        self.spawn_mock.side_effect = None
+        with mock.patch("threading.Thread") as thread:
+            self.host._spawn_reclaim()
+        (argv,), kwargs = self.spawn_mock.call_args
+        self.assertEqual(argv[1:], ["-P", "-s", "-m", DockerHost.__module__, DOCKER])
+        self.assertTrue(kwargs["start_new_session"])
+        self.assertEqual(kwargs["cwd"], "/")
+        self.assertEqual(kwargs["stdin"], DEVNULL)
+        self.assertEqual(kwargs["stdout"], DEVNULL)
+        self.assertEqual(set(kwargs["env"]), {"PATH", "HOME", "PYTHONPATH"})
+        log = os.path.join(os.path.dirname(self.kept), "reclaim.log")
+        self.assertEqual(stat.S_IMODE(os.stat(log).st_mode), 0o600)
+        self.spawn_mock.return_value.wait.assert_not_called()
+        thread.assert_called_once()
+        self.assertEqual(self.order, [])
+
+    def test_a_background_spawn_failure_warns_and_returns(self):
+        self.spawn_mock.side_effect = OSError("cannot spawn")
+        with self.assertLogs("session", "WARNING") as logs:
+            self.host._spawn_reclaim()
+        self.assertIn("docker reclaim: cannot spawn", logs.output[0])
+
+    def test_the_background_entrypoint_skips_without_a_daemon(self):
+        module = sys.modules[DockerHost.__module__]
+        os.unlink(self.ep.removeprefix("unix://"))
+        with mock.patch("sys.argv", [module.__file__, DOCKER]):
+            runpy.run_path(module.__file__, run_name="__main__")
+        self.assertEqual(self.order, [])
+        self.spawn_mock.assert_not_called()
+
+    def test_a_piped_close_schedules_reclaim_after_closing_the_container(self):
+        def spawn():
+            self.order.append("reclaim")
+
+        with mock.patch.object(self.host, "_spawn_reclaim", side_effect=spawn):
+            self.host._close_piped("w", CONTAINER)
+        self.assertEqual(self.order, [("close", CONTAINER), "reclaim"])
 
     def test_unsaved_work_keeps_the_volume_and_warns_once_for_good(self):
         message = f"Workspace {self.GONE} has uncommitted or unpushed work in: publish."
@@ -2582,7 +2806,9 @@ class AttachTargetTest(Base):
         self.assertTrue(DockerHost.attachable)
         self.assertEqual(
             self.host.attach_target("w"),
-            CommandView(printed=shlex.join(argv), argv=("/usr/bin/env", *cleared, *argv)),
+            CommandView(
+                printed=shlex.join(argv[:-1]) + " '=w'", argv=("/usr/bin/env", *cleared, *argv)
+            ),
         )
         with self.assertRaisesRegex(SessionError, "^no docker session x$"):
             self.host.attach_target("x")

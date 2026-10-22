@@ -4,8 +4,7 @@ its caller names the ticket that calls it; that ticket deletes the entry.
 
 from agent_pm.delegate.composer.teams import TeamKind
 from agent_pm.delegate.event.types import AutopilotStatus
-from agent_pm.linear_orchestrator.engine.issue_refs import milestone
-from agent_pm.linear_orchestrator.engine.types import State
+from agent_pm.orchestrator.engine.flow.tracker import Connect
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.opencode import OpenCodeClient
@@ -21,10 +20,8 @@ _ = TeamKind.ROLES, TeamKind.TEMPLATES
 _ = OutcomeStatus.NEEDS_INPUT, OutcomeStatus.FAILED
 # outcome.py parses AutopilotStatus(status).
 _ = AutopilotStatus.CAPPED, AutopilotStatus.STOPPED
-# engine/config.py and ops.py iterate State for the [states] keys.
-_ = State.TODO, State.IN_PROGRESS, State.IN_REVIEW, State.CANCELED
 # Record checks ctl[0] against LayerCommand's values.
-_ = LayerCommand.LINEAR, LayerCommand.SESSION
+_ = LayerCommand.ORCHESTRATOR, LayerCommand.SESSION
 # Effort(value) parses a run's effort; clients/common.py lists the values.
 _ = Effort.LOW, Effort.MEDIUM, Effort.HIGH, Effort.XHIGH, Effort.MAX
 # Spec checks its tier, and clients/common.py a tiers table's keys, against Tier's values.
@@ -63,9 +60,9 @@ _ = ClaudeClient, CodexClient, OpenCodeClient
 _ = Session.class_roots
 # TASK-506 routes sid-checked CLI closes through Session.retire; delete this entry then.
 _ = Session.retire
+# The router calls each Connect: Vulture reads a __call__ whose self is positional-only as a
+# function (this file is never run).
+_ = Connect.__call__
 # Only tests read it, but the session interface is frozen (tests/guard_checks/exports.py
 # session_interface_snapshot; TASK-396).
 _ = SessionRow.last_lines
-
-# TASK-653's issue create resolves --milestone with it.
-_ = milestone

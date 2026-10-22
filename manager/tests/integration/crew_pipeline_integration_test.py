@@ -1,5 +1,5 @@
 """A Linear pipeline through agent-pm-crew on the real commands (manager/tests/live_pipeline.py):
-`crew run p -- agent-pm-linear router --issue ID --tui`, no --events, records its pipeline Record
+`crew run p -- agent-pm-orchestrator router --issue ID --tui`, no --events, records its pipeline Record
 and writes its turn ends and one outcome to the manager's events file (FR-18, FR-28); a crew killed
 before the commit leaves an entry attach adopts and crew resume keeps (FR-28); a pipeline whose
 sessions were killed comes back by crew resume on its sid at its display and writes back. Ports

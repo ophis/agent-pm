@@ -40,7 +40,7 @@ MINIMAL_LINE = (
     '"ctl":["agent-pm-session"],"resume":["agent-pm-session","resume","n"],"display":null,'
     '"detail":null}'
 )
-CTL = "ctl: want [C], C one of agent-pm-delegate, agent-pm-linear, agent-pm-session"
+CTL = "ctl: want [C], C one of agent-pm-delegate, agent-pm-orchestrator, agent-pm-session"
 RESUME = "resume: want [ctl[0], resume, KEY], KEY printable and not starting with -"
 CROSS = "/x/bin/agent-pm-crew"
 TEXT = "want a non-empty printable str"
@@ -147,8 +147,14 @@ class RecordLine(Case):
                 with self.subTest(field=field, value=value):
                     self.refused(line(FULL, **{field: value}), want)
 
+    def test_the_layer_commands_are_delegate_orchestrator_and_session(self):
+        self.assertEqual(
+            list(utils.LayerCommand),
+            ["agent-pm-delegate", "agent-pm-orchestrator", "agent-pm-session"],
+        )
+
     def test_each_layer_commands_exact_forms_are_accepted(self):
-        for command in ("agent-pm-delegate", "agent-pm-linear", "agent-pm-session"):
+        for command in ("agent-pm-delegate", "agent-pm-orchestrator", "agent-pm-session"):
             with self.subTest(command=command):
                 record = Record.parse(
                     line(FULL, ctl=[command], resume=[command, "resume", "TASK-1 /w"])

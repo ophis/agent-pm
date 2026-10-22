@@ -23,6 +23,7 @@ from agent_pm.session.engine.types import (
     Blocked,
     ConfigError,
     Mode,
+    Reply,
     Spec,
     TurnEnd,
     TurnFailed,
@@ -112,15 +113,14 @@ class TuiSessions(Case):
         }
         env = self.server.env(XDG_DATA_HOME=str(self.root / "data"), **git)
         self.enterContext(mock.patch.dict(os.environ, env, clear=True))
-        self.session_cls = configured(
-            {
-                "opencode": {
-                    "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
-                    "tiers": {"1": "ollama/qwen3.6:35b-mlx"},
-                    "env": {"FAKE_LOG": str(self.log), "FAKE_SCENARIO": str(self.scenario)},
-                }
+        self.clients = {
+            "opencode": {
+                "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
+                "tiers": {"1": "ollama/qwen3.6:35b-mlx"},
+                "env": {"FAKE_LOG": str(self.log), "FAKE_SCENARIO": str(self.scenario)},
             }
-        )
+        }
+        self.session_cls = configured(self.clients)
         self.common = self.session_cls._config().registry.client("opencode").common
         self.spec = Spec(
             workdir=str(self.work),
@@ -160,7 +160,9 @@ class TuiSessions(Case):
     def test_a_prompt_turn_ends_done_with_its_reply(self):
         self.scene([[{"text": "Hello back."}]])
         handle, stream = self.start()
-        self.assertEqual(stream.until(TurnEnd), [Activity(""), TurnEnd("Hello back.")])
+        self.assertEqual(
+            stream.until(TurnEnd), [Activity(""), Reply("Hello back."), TurnEnd("Hello back.")]
+        )
         self.assertEqual(handle.reply, "Hello back.")
         self.assertEqual(self.words(1)[-1], "w1 done")
         (call,) = self.calls()
@@ -175,14 +177,16 @@ class TuiSessions(Case):
         handle.send("next")
         self.assertEqual(
             stream.until(TurnEnd),
-            [Activity(""), Activity("read"), Activity("read"), TurnEnd("two")],
+            [Activity(""), Activity("read"), Activity("read"), Reply("two"), TurnEnd("two")],
         )
         self.assertEqual(handle.reply, "two")
 
     def test_a_reply_saved_after_idle_is_still_read(self):
         self.scene([[{"text": "saved late", "late": 800}]])
         handle, stream = self.start()
-        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("saved late"))
+        self.assertEqual(
+            stream.until(TurnEnd), [Activity(""), Reply("saved late"), TurnEnd("saved late")]
+        )
         self.assertEqual(handle.reply, "saved late")
 
     def test_a_late_reply_is_not_the_previous_turns(self):
@@ -229,6 +233,45 @@ class TuiSessions(Case):
         self.assertEqual(found[-1], TurnEnd("cleaned"))
         self.assertEqual(self.words(2)[-1], "w1 done")
 
+    def test_yolo_tools_never_report_blocked(self):
+        self.session_cls = configured(self.clients, {"isolated": True})
+        self.scene(
+            [
+                [
+                    {"tool": "glob", "permission": "external_directory", "pattern": "/opt/team"},
+                    {"tool": "read", "permission": "read", "pattern": "sample.env"},
+                    {"bash": "git status"},
+                    {"bash": "git status", "child": True},
+                    {"tool": "bash", "permission": "doom_loop", "pattern": "git status"},
+                    {"text": "finished"},
+                ]
+            ]
+        )
+        _, stream = self.start()
+        found = stream.until(TurnEnd)
+        self.assertFalse(any(isinstance(event, Blocked) for event in found), found)
+        self.assertEqual(
+            [event.detail for event in found if isinstance(event, Activity) and event.detail],
+            ["glob", "glob", "read", "read", "bash", "bash", "bash", "bash"],
+        )
+        self.assertEqual(found[-1], TurnEnd("finished"))
+        self.assertEqual(self.words(1), ["w1 done"])
+        stream.quiet()
+        self.assertEqual(self.words(1), ["w1 done"])
+
+    def test_yolo_questions_still_block_in_root_and_child_sessions(self):
+        self.session_cls = configured(self.clients, {"isolated": True})
+        self.scene(
+            [[{"question": "Database"}, {"question": "Region", "child": True}, {"text": "picked"}]]
+        )
+        handle, stream = self.start()
+        for title in ("Database", "Region"):
+            self.assertEqual(stream.until(Blocked)[-1], Blocked(f"question: {title}"))
+            self.assertEqual(self.words(1)[-1], "w1 blocked")
+            handle.send("answer")
+        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("picked"))
+        self.assertEqual(self.words(3), ["w1 blocked", "w1 blocked", "w1 done"])
+
     def test_a_child_sessions_ask_blocks(self):
         self.scene([[{"bash": "make", "child": True}, {"text": "built"}]])
         handle, stream = self.start()
@@ -260,7 +303,8 @@ class TuiSessions(Case):
         self.scene([[{"tool": "read"}, {"foreign": True}, {"busy": True}, {"text": "ok"}]])
         _, stream = self.start()
         self.assertEqual(
-            stream.until(TurnEnd), [Activity(""), Activity("read"), Activity("read"), TurnEnd("ok")]
+            stream.until(TurnEnd),
+            [Activity(""), Activity("read"), Activity("read"), Reply("ok"), TurnEnd("ok")],
         )
         stream.quiet()
 
@@ -271,7 +315,7 @@ class TuiSessions(Case):
         self.assertEqual(stream.until(TurnFailed)[-1], TurnFailed("APIError", "connection refused"))
         stream.quiet()
         handle.send("again")
-        self.assertEqual(stream.until(TurnEnd), [Activity(""), TurnEnd("ok now")])
+        self.assertEqual(stream.until(TurnEnd), [Activity(""), Reply("ok now"), TurnEnd("ok now")])
         self.assertEqual(self.words(1)[-1], "w1 done")
 
     def test_a_recovered_error_still_ends_the_turn(self):
@@ -307,6 +351,59 @@ class TuiSessions(Case):
         self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("after"))
         handle.send("more")
         self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("again"))
+
+    def test_replies_arrive_before_idle_and_skip_children_and_duplicate_updates(self):
+        self.scene(
+            [
+                [
+                    {"text": "first", "repeat": 2},
+                    {"text": "child reply", "child": True},
+                    {"busy": True},
+                    {"reinit": True},
+                    {"text": "synthetic", "synthetic": True},
+                    {"text": "ignored", "ignored": True},
+                    {"text": " "},
+                    {"question": "Continue"},
+                    {"text": "first"},
+                    {"text": "last", "repeat": 2},
+                ]
+            ]
+        )
+        handle, stream = self.start()
+        before = stream.until(Blocked)
+        self.assertEqual([e for e in before if isinstance(e, Reply)], [Reply("first")])
+        handle.send("answer")
+        after = stream.until(TurnEnd)
+        self.assertEqual(
+            [e for e in after if isinstance(e, Reply)], [Reply("first"), Reply("last")]
+        )
+        self.assertEqual(after[-1], TurnEnd("last"))
+
+    def test_each_turn_delivers_its_own_replies_even_when_text_is_repeated(self):
+        self.scene([[{"text": "same"}], [{"text": "same", "late": 800}]])
+        handle, stream = self.start()
+        for n in range(2):
+            if n:
+                handle.send("next")
+            self.assertEqual(stream.until(TurnEnd), [Activity(""), Reply("same"), TurnEnd("same")])
+
+    def test_completed_messages_are_waited_for_when_other_text_is_already_saved(self):
+        self.scene(
+            [
+                [{"text": "early"}, {"text": "final", "reads": 6}],
+                [{"text": "middle", "reads": 6}, {"text": "last"}],
+            ]
+        )
+        handle, stream = self.start()
+        self.assertEqual(
+            stream.until(TurnEnd),
+            [Activity(""), Reply("early"), Reply("final"), TurnEnd("final")],
+        )
+        handle.send("next")
+        self.assertEqual(
+            stream.until(TurnEnd),
+            [Activity(""), Reply("middle"), Reply("last"), TurnEnd("last")],
+        )
 
     def test_a_resume_selects_the_session_and_sends_its_prompt(self):
         self.scene([[{"text": "first"}]], resume=[[{"text": "fixed"}]])

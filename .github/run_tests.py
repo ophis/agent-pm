@@ -246,7 +246,7 @@ def supervise(title):
         roots = [
             repo,
             repo / ".github",
-            repo / "linear-orchestrator/tests",
+            repo / "orchestrator/tests",
             *src_trees(repo),
             sysconfig.get_path("purelib"),
             sysconfig.get_path("platlib"),
@@ -403,12 +403,12 @@ def shard(suite, value):
     match = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", value)
     found = sorted(tests(suite), key=lambda test: test.id())
     if not match:
-        raise ValueError("unit shard must be N/TOTAL, numbered 1 through TOTAL")
+        raise ValueError("test shard must be N/TOTAL, numbered 1 through TOTAL")
     number, total = map(int, match.groups())
     if not 1 <= number <= total <= len(found):
-        raise ValueError("unit shards must be nonempty, numbered 1 through TOTAL")
+        raise ValueError("test shards must be nonempty, numbered 1 through TOTAL")
     if len({test.id() for test in found}) != len(found):
-        raise ValueError("unit discovery contains duplicate test IDs")
+        raise ValueError("test discovery contains duplicate test IDs")
     return unittest.TestSuite(found[number - 1 :: total])
 
 
@@ -434,9 +434,9 @@ def main(argv):
     )
     GATE = isolation.install(root)
     part = None
-    if len(directories) == 3 and directories[:2] == ["--unit", "--shard"]:
-        part = directories[2]
-        directories = ["--unit"]
+    if len(directories) >= 3 and directories[-2] == "--shard":
+        part = directories[-1]
+        directories = directories[:-2]
     suite, _ = select(
         root,
         ci_scope.selected(root, unit_directories(root))

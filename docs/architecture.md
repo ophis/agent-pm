@@ -1,6 +1,6 @@
 # Core architecture
 
-Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Import rules: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
+Five layers, one project each: utils < session < delegate < orchestrator < manager. Import rules: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
 
 ```mermaid
 flowchart TB
@@ -13,12 +13,15 @@ flowchart TB
     MC["cli.py<br>agent-pm-crew"] --> W["engine/crew.py"] --> RS["engine/roster.py"]
     MC --> HO["engine/holder.py<br>lease while a command runs"] --> RS
   end
-  subgraph LO[agent_pm.linear_orchestrator]
-    LCLI["cli.py<br>agent-pm-linear"]
+  subgraph LO[agent_pm.orchestrator]
+    LCLI["cli.py<br>agent-pm-orchestrator"]
     R["engine/router.py<br>pick · usage gate · trigger"]
     LR["engine/linear_run.py<br>Delegate ownership · queries"]
     WB["engine/writeback.py<br>one event's write-back"]
     PP["engine/promote.py → prune.py"]
+    LT["trackers/linear/linear_tracker.py<br>LinearTracker"]
+    LB["trackers/local/<br>LocalTracker · issue files · board lock"]
+    FL["engine/flow/<br>Tracker · IssueState · Handoff grammar · workflow"]
     LC["engine/config.py<br>[core] overlay"]
   end
   subgraph DL[agent_pm.delegate]
@@ -55,9 +58,14 @@ flowchart TB
   SC --> DR
   LCLI --> R & PP & WB & LR
   R & PP & WB --> LR
+  PP & R --> LT --> FL
+  LCLI --> LB --> FL
+  PP & R --> FL
+  WB --> LT
+  WB --> FL
   R -->|"writeback.replay"| WB
   LR -->|"agent_pm.delegate: detach, views"| HD
-  H -.->|"each event: agent-pm-linear writeback"| LCLI
+  H -.->|"each event: agent-pm-orchestrator writeback"| LCLI
   LC -->|"Delegate class methods"| HD
   W -.-> CC
   D & H --> HD

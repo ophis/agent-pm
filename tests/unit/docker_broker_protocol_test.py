@@ -9,12 +9,27 @@ PROTOCOL = Path(REPO, "protocol/docker-broker")
 
 
 class DockerBrokerProtocol(Case):
+    def test_plugin_sources_require_full_commits(self):
+        schema = json.loads((PROTOCOL / "protocol.schema.json").read_text())
+        validator = Draft202012Validator({**schema, "$ref": "#/$defs/plugin"})
+        self.assertTrue(validator.is_valid("x@owner/repo#" + "a" * 40))
+        for value in (
+            "autopilot",
+            "x@owner/repo",
+            "x@owner/repo#main",
+            "x@owner/repo#v1.0",
+            "x@owner/repo#" + "a" * 39,
+            "x@owner/repo#" + "A" * 40,
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(validator.is_valid(value))
+
     def test_every_shared_fixture_has_its_expected_schema_outcome(self):
         schema = json.loads((PROTOCOL / "protocol.schema.json").read_text())
         Draft202012Validator.check_schema(schema)
         index = json.loads((PROTOCOL / "fixtures/index.json").read_text())
         self.assertTrue(index["cases"])
-        self.assertEqual(index["protocol_version"], "16")
+        self.assertEqual(index["protocol_version"], "19")
         names = [case["file"] for case in index["cases"]]
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(
@@ -44,6 +59,8 @@ class DockerBrokerProtocol(Case):
             "refresh_output",
             "close_input",
             "close_output",
+            "probe_provider_input",
+            "probe_provider_output",
             "status_input",
             "status_output",
             "workspace_rm_input",

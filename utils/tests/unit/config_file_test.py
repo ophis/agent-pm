@@ -114,14 +114,14 @@ class Resources(Case):
         for section, text in (
             ("session", SESSION),
             ("delegate", DELEGATE),
-            ("linear_orchestrator", ORCH),
+            ("orchestrator", ORCH),
         ):
             folder = Path(self.root, self.package, section)
             folder.mkdir(parents=True)
             (folder / "__init__.py").write_text("")
             (folder / "config.toml").write_text(text)
         modules = {}
-        for section in ("session", "delegate", "linear_orchestrator"):
+        for section in ("session", "delegate", "orchestrator"):
             name = f"{self.package}.{section}"
             spec = importlib.util.spec_from_file_location(
                 name, Path(self.root, self.package, section, "__init__.py")
@@ -130,7 +130,7 @@ class Resources(Case):
         self.enterContext(mock.patch("importlib.import_module", side_effect=modules.__getitem__))
         self.resources = [
             (f"{self.package}.{section}", "config.toml")
-            for section in ("session", "delegate", "linear_orchestrator")
+            for section in ("session", "delegate", "orchestrator")
         ]
 
     def local(self, text):
@@ -147,7 +147,7 @@ class Resources(Case):
 
     def test_reads_resources_and_interleaves_each_local_section(self):
         self.local(
-            '[delegate.roles.pm]\ntier = 1\n[linear_orchestrator.roles.pm]\ntier = 3\naccount = "pm@x"\n'
+            '[delegate.roles.pm]\ntier = 1\n[orchestrator.roles.pm]\ntier = 3\naccount = "pm@x"\n'
         )
         found = read_resources(iter(self.resources))
         self.assertEqual(
@@ -161,7 +161,7 @@ class Resources(Case):
         self.local('[delegate.roles.pm]\naccount = "not-known-at-this-layer"\n')
         self.assertEqual(read_resources(self.resources)["roles"]["pm"]["account"], "")
         self.local('[delegate]\nclient = "lower-local"\n[delegate.roles.pm]\ntier = 1\n')
-        Path(self.root, self.package, "linear_orchestrator", "config.toml").write_text(
+        Path(self.root, self.package, "orchestrator", "config.toml").write_text(
             ORCH.replace('account = ""', 'tier = 3\naccount = ""')
         )
         self.assertEqual(read_resources(self.resources)["roles"]["pm"]["tier"], 3)
@@ -169,7 +169,7 @@ class Resources(Case):
 
     def test_only_supplied_layers_are_validated(self):
         self.local(
-            "[session.hosts.tmux]\nstatus_line = true\n[delegate]\nanything = 1\n[linear_orchestrator]\nunknown = true\n"
+            "[session.hosts.tmux]\nstatus_line = true\n[delegate]\nanything = 1\n[orchestrator]\nunknown = true\n"
         )
         self.assertTrue(read_resources(self.resources[:1])["hosts"]["tmux"]["status_line"])
         with self.assertRaisesRegex(ConfigFileError, "unknown key 'anything'"):
@@ -246,17 +246,17 @@ class Resources(Case):
         unrelated = DELEGATE + '[clients.writer]\naccount = ""\n'
         Path(self.root, self.package, "delegate", "config.toml").write_text(unrelated)
         extra = 'harness_key = ""\n' + ORCH
-        Path(self.root, self.package, "linear_orchestrator", "config.toml").write_text(extra)
+        Path(self.root, self.package, "orchestrator", "config.toml").write_text(extra)
         for text, key, hint in (
             (
                 'harness_key = "secret-service"\n',
                 "harness_key",
-                "move it under [linear_orchestrator]",
+                "move it under [orchestrator]",
             ),
             (
                 '[roles.engineer]\naccount = "engineer@x"\n',
                 "roles.engineer.account",
-                "move it under [linear_orchestrator]",
+                "move it under [orchestrator]",
             ),
             (
                 'unknown_key = "x"\n',
@@ -381,7 +381,7 @@ class Resources(Case):
 
     def test_local_goes_over_every_table_merging_and_lists_replaced_whole(self):
         self.local(
-            '[session.hosts.tmux]\nstatus_line = true\n[delegate]\nclient = "b"\nteam_dirs = ["~/t"]\n[delegate.roles.pm]\ntier = 1\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n'
+            '[session.hosts.tmux]\nstatus_line = true\n[delegate]\nclient = "b"\nteam_dirs = ["~/t"]\n[delegate.roles.pm]\ntier = 1\n[orchestrator]\nteam = "T"\n[orchestrator.roles.pm]\naccount = "pm@x"\n'
         )
         found = read_resources(self.resources)
         self.assertEqual(

@@ -30,9 +30,9 @@ from manager.tests.live_crew import MANAGER, LiveCrew
 from utils.tests.case import local_section
 
 ID = "TASK-7"
-ROUTER = ("agent-pm-linear", "router", "--issue", ID, "--tui")
-CTL, RESUME = ("agent-pm-linear",), ("agent-pm-linear", "resume", ID)
-TESTS = os.path.join(REPO, "linear-orchestrator", "tests")
+ROUTER = ("agent-pm-orchestrator", "router", "--issue", ID, "--tui")
+CTL, RESUME = ("agent-pm-orchestrator",), ("agent-pm-orchestrator", "resume", ID)
+TESTS = os.path.join(REPO, "orchestrator", "tests")
 FAKE_PYTHON = os.path.abspath(fake_python.__file__)
 PR = f"https://github.com/{PROJECT_REPO}/pull/1"
 
@@ -44,7 +44,7 @@ class LivePipeline(LiveCrew):
         self.workdirs = os.path.join(state, "work")
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
             f.write(
-                local_section(run_fixtures.local(state) + TASK_LABELS, "linear_orchestrator")
+                local_section(run_fixtures.local(state) + TASK_LABELS, "orchestrator")
                 + "\n"
                 + run_fixtures.CORE_LOCAL
             )

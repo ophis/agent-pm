@@ -1,6 +1,6 @@
 // Package github is the broker's GitHub App client: the App JWT, its installations, installation tokens and the
 // repositories each reaches, and its bot user's ID.
-// Its errors carry an HTTP status at most, never a response body or a token.
+// Status errors carry the request method/path and a bounded, credential-redacted JSON message, never a full body.
 package github
 
 import (
@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -57,9 +58,37 @@ type Installation struct {
 }
 
 // StatusError is a response with an unexpected HTTP status.
-type StatusError struct{ Status int }
+type StatusError struct {
+	Status                int
+	method, path, message string
+}
 
-func (e *StatusError) Error() string { return "GitHub answered HTTP " + strconv.Itoa(e.Status) }
+func (e *StatusError) Error() string {
+	text := fmt.Sprintf("GitHub answered HTTP %d to %s %s", e.Status, e.method, e.path)
+	if e.message != "" {
+		text += ": " + strconv.Quote(e.message)
+	}
+	return text
+}
+
+var (
+	githubToken = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+`)
+	jwtToken    = regexp.MustCompile(`[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*){2,}`)
+)
+
+// redact removes credentials before truncation so no partial token can escape at the boundary.
+func redact(text, bearer string) string {
+	if strings.Contains(text, "PRIVATE KEY") {
+		return "[redacted]"
+	}
+	text = githubToken.ReplaceAllString(text, "[redacted]")
+	// Hide the whole dotted sequence, including adjacent text, rather than trusting a candidate header.
+	text = jwtToken.ReplaceAllString(text, "[redacted]")
+	if bearer != "" {
+		text = strings.ReplaceAll(text, bearer, "[redacted]")
+	}
+	return text
+}
 
 type transportError struct{ op string }
 
@@ -137,7 +166,16 @@ func (c Client) call(ctx context.Context, method, path, bearer string, body any,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != want {
-		return &StatusError{resp.StatusCode}
+		failure := &StatusError{Status: resp.StatusCode, method: method, path: redact(req.URL.EscapedPath(), bearer)}
+		var answer struct {
+			Message string `json:"message"`
+		}
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+		if readErr == nil && len(data) <= maxBody && json.Unmarshal(data, &answer) == nil {
+			message := []rune(redact(answer.Message, bearer))
+			failure.message = string(message[:min(len(message), 200)])
+		}
+		return failure
 	}
 	if out == nil {
 		return nil
@@ -234,6 +272,20 @@ func (c Client) Revoke(ctx context.Context, token string) error {
 		return nil
 	}
 	return err
+}
+
+// AppSlug is the slug of the App jwt signs for.
+func (c Client) AppSlug(ctx context.Context, jwt string) (string, error) {
+	var got struct {
+		Slug string `json:"slug"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/app", jwt, nil, http.StatusOK, &got); err != nil {
+		return "", err
+	}
+	if !Login.MatchString(got.Slug) {
+		return "", errors.New("GitHub answered no valid App slug")
+	}
+	return got.Slug, nil
 }
 
 // BotUser is the user ID of bot login (`<app>[bot]`), from the public user API, sent without a credential.

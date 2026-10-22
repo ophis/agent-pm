@@ -44,7 +44,7 @@ class ProjectRoots(Case):
             sandbox.project_roots(REPO),
             tuple(
                 os.path.join(REPO, project, "src")
-                for project in ("delegate", "linear-orchestrator", "manager", "session", "utils")
+                for project in ("delegate", "manager", "orchestrator", "session", "utils")
             ),
         )
 

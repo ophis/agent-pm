@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import re
@@ -5,10 +6,12 @@ import shutil
 import stat
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 TEMPLATES = Path("/opt/agent-pm/templates")
 STUB = Path("/opt/agent-pm/lib/hook-stub")
+SECRETS = Path("/run/agent-pm/secrets")
 
 
 def bootstrap_claude(templates, directory, cwd):
@@ -44,15 +47,11 @@ def install_hook(stub, destination, owner=0, top=Path("/")):
     destination.chmod(0o755)
 
 
-def bootstrap_codex(
-    directory,
-    cwd,
-    secrets=Path("/run/agent-pm/secrets"),
-    plugins=Path("/opt/agent-pm/codex-plugins"),
-):
+def bootstrap_codex(directory, cwd, secrets=None, plugins=Path("/opt/agent-pm/codex-plugins")):
+    secrets = SECRETS if secrets is None else secrets
+    native = tomllib.loads((plugins / "config.toml").read_text()).get("plugins", {})
     enabled = "".join(
-        f"[plugins.{json.dumps(plugin.name + '@inline')}]\nenabled = true\n"
-        for plugin in sorted((plugins / "inline").iterdir())
+        f"[plugins.{json.dumps(identifier)}]\nenabled = true\n" for identifier in sorted(native)
     )
     (directory / "config.toml").write_text(
         'cli_auth_credentials_store = "file"\n'
@@ -61,13 +60,19 @@ def bootstrap_codex(
         f'[projects.{json.dumps(cwd)}]\ntrust_level = "trusted"\n' + enabled
     )
     (directory / "plugins").mkdir(mode=0o700)
-    (directory / "plugins/cache").symlink_to(plugins, target_is_directory=True)
+    (directory / "plugins/cache").symlink_to(plugins / "plugins/cache", target_is_directory=True)
     (directory / "auth.json").symlink_to(secrets / "codex/auth.json")
 
 
-def inject_codex(stream, secrets=Path("/run/agent-pm/secrets"), directory=None):
-    def reject():
-        sys.exit("bootstrap: invalid managed Codex credentials or destination")
+def inject_codex(stream, secrets=None, directory=None):
+    """Writes the access-only document to the secret file and points CODEX_HOME/auth.json at it.
+
+    Nothing new lands in CODEX_HOME but the link: Codex's own state fills that tmpfs. Every exit
+    message is fixed text, never the document's.
+    """
+
+    def reject(why="invalid managed Codex credentials"):
+        sys.exit(f"bootstrap: {why}")
 
     def unique(pairs):
         result = dict(pairs)
@@ -75,18 +80,19 @@ def inject_codex(stream, secrets=Path("/run/agent-pm/secrets"), directory=None):
             raise ValueError("duplicate credential field")
         return result
 
+    secrets = SECRETS if secrets is None else secrets
     if directory is None:
         value = os.environ.get("CODEX_HOME", "")
         if not value:
-            reject()
+            reject("invalid Codex home")
         directory = Path(value)
     if not directory.is_absolute() or directory.is_symlink() or not directory.is_dir():
-        reject()
+        reject("invalid Codex home")
     try:
         raw = stream.read((1 << 16) + 1)
         data = json.loads(raw, object_pairs_hook=unique)
         tokens = data["tokens"]
-        if (
+        valid = not (
             len(raw) > 1 << 16
             or set(data) != {"auth_mode", "OPENAI_API_KEY", "tokens", "last_refresh"}
             or data["auth_mode"] != "chatgpt"
@@ -99,39 +105,59 @@ def inject_codex(stream, secrets=Path("/run/agent-pm/secrets"), directory=None):
                 for key in ("id_token", "access_token", "account_id")
             )
             or not isinstance(data["last_refresh"], str)
-        ):
-            reject()
-        destination = directory / "auth.json"
-        current_path = destination
-        if destination.is_symlink():
-            expected = secrets / "codex/auth.json"
-            if destination.readlink() != expected or secrets.is_symlink():
-                reject()
-            if expected.parent.is_symlink():
-                reject()
-            current_path = expected
-        initial = destination.is_symlink() and not os.path.lexists(current_path)
-        if os.path.lexists(current_path):
-            if not stat.S_ISREG(current_path.lstat().st_mode):
-                reject()
-            with current_path.open("rb") as current:
-                old = json.loads(current.read((1 << 16) + 1))
-            if old["tokens"]["account_id"] != tokens["account_id"]:
-                reject()
+        )
     except (ValueError, TypeError, KeyError, OSError, RecursionError):
+        valid = False
+    if not valid:
         reject()
-    if initial:
-        destination = current_path
-        destination.parent.mkdir(mode=0o700, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=".auth-", dir=destination.parent)
-    temporary = Path(name)
+    secret = secrets / "codex/auth.json"
+    link = directory / "auth.json"
+    if secrets.is_symlink() or secret.parent.is_symlink():
+        reject("managed Codex secret directory is a link")
+    managed = link.is_symlink()
+    if managed and link.readlink() != secret:
+        reject("CODEX_HOME/auth.json links elsewhere")
+    effective = secret
+    if not managed and os.path.lexists(link):
+        if not stat.S_ISREG(link.lstat().st_mode):
+            reject("CODEX_HOME/auth.json is not a regular file")
+        effective = link
+    if os.path.lexists(effective):
+        if not stat.S_ISREG(effective.lstat().st_mode):
+            reject("managed Codex credential is not a regular file")
+        try:
+            with effective.open("rb") as current:
+                account = json.loads(current.read((1 << 16) + 1))["tokens"]["account_id"]
+        except (ValueError, TypeError, KeyError, OSError, RecursionError):
+            reject("existing Codex credentials are unreadable")
+        if account != tokens["account_id"]:
+            reject("existing Codex credentials belong to another account")
+    staged = pointer = None
     try:
+        secret.parent.mkdir(mode=0o700, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix=".auth-", dir=secret.parent)
+        staged = Path(name)
         os.fchmod(fd, 0o400)
         with os.fdopen(fd, "wb") as output:
             output.write(raw)
-        os.replace(temporary, destination)
+        os.replace(staged, secret)
+        if not managed:
+            while True:
+                candidate = directory / f".auth-link-{os.urandom(16).hex()}"
+                try:
+                    os.symlink(secret, candidate)
+                except FileExistsError:
+                    continue
+                pointer = candidate
+                break
+            os.replace(pointer, link)
+    except OSError as error:
+        reject(f"cannot write managed Codex credentials: {error.strerror or type(error).__name__}")
     finally:
-        temporary.unlink(missing_ok=True)
+        for path in (staged, pointer):
+            if path is not None:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
 
 
 def stage_runtime(stream, root=Path("/run/agent-pm")):

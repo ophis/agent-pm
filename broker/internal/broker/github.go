@@ -10,9 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -35,8 +33,11 @@ const (
 const writeScript = "mkdir -p -m 0700 " + tokenDir + " && umask 0377 && rm -f " + tokenDir + `/."$1".new && cat > ` + tokenDir +
 	`/."$1".new && mv -f ` + tokenDir + `/."$1".new ` + tokenDir + `/"$1"`
 
-// userID is a GitHub user ID as the user item holds it: decimal, no sign or leading zero.
-var userID = regexp.MustCompile(`^[1-9][0-9]*$`)
+// botUser is what login github keeps in the users item: the App's slug and its bot user's ID.
+type botUser struct {
+	Slug string `json:"slug"`
+	ID   int64  `json:"id"`
+}
 
 type tokenEntry struct {
 	Account      string `json:"account"`
@@ -144,7 +145,7 @@ func apiError(err error) *protocol.Error {
 }
 
 func loginError(app string) *protocol.Error {
-	return protocol.New(protocol.LoginRequired, "No usable GitHub App private key "+app+": run agent-pm-broker login github "+app+".")
+	return protocol.New(protocol.LoginRequired, "No usable GitHub App private key "+app+": run agent-pm-broker login github "+AppKeyService+".")
 }
 
 func (g GitHub) locked(f func() error) error {
@@ -322,45 +323,59 @@ func (g GitHub) untrack(container string, entries []tokenEntry) {
 	}
 }
 
-// SaveUser looks up app's bot user (`<app>[bot]`) and keeps its ID, for start to report; out gets its one line.
-func (g GitHub) SaveUser(ctx context.Context, app string, out io.Writer) error {
-	login := app + "[bot]"
+// SaveUser asks GitHub which App the AppKeyService key is (its slug), looks up its bot user (`<slug>[bot]`) and keeps
+// both, for start to check and report; out gets its one line.
+func (g GitHub) SaveUser(ctx context.Context, out io.Writer) error {
+	rerun := "; rerun agent-pm-broker login github " + AppKeyService
+	jwt, err := g.jwt(AppKeyService)
+	if err != nil {
+		return err
+	}
+	slug, err := g.API.AppSlug(ctx, jwt)
+	if err != nil {
+		return fmt.Errorf("looking up the GitHub App of the %s key failed: %w%s", AppKeyService, err, rerun)
+	}
+	login := slug + "[bot]"
 	id, err := g.API.BotUser(ctx, login)
 	if err != nil {
-		return fmt.Errorf("looking up GitHub user %s failed: %w; rerun agent-pm-broker login github %s", login, err, app)
+		return fmt.Errorf("looking up GitHub user %s failed: %w%s", login, err, rerun)
 	}
-	if err := g.Keychain.PutSecret(usersService, app, []byte(strconv.FormatInt(id, 10))); err != nil {
-		return fmt.Errorf("saving the bot user ID of %s failed: %w", app, err)
+	data, _ := json.Marshal(botUser{slug, id})
+	if err := g.Keychain.PutSecret(usersService, AppKeyService, data); err != nil {
+		return fmt.Errorf("saving the bot user ID of %s failed: %w", slug, err)
 	}
-	_, err = fmt.Fprintf(out, "GitHub App %s bot user %s has ID %d\n", app, login, id)
+	_, err = fmt.Fprintf(out, "GitHub App %s bot user %s has ID %d\n", slug, login, id)
 	return err
 }
 
-// Ready checks, without reading the key, that app is the broker's App and its key item is in place.
+// Ready checks, without reading the key, that app is the App login github saved and its key item is in place.
 func (g GitHub) Ready(app string) error {
-	if !GitHubApps[app] {
-		return protocol.New(protocol.ManifestRejected, "Manifest rejected: github app must be agent-pm-bot.")
+	if _, err := g.BotUserID(app); err != nil {
+		return err
 	}
-	_, err := g.appID(app)
+	_, err := g.appID(AppKeyService)
 	return err
 }
 
-// BotUserID is app's bot user ID as login github saved it.
+// BotUserID is app's bot user ID as login github saved it; another app than the saved one is refused.
 func (g GitHub) BotUserID(app string) (int64, error) {
-	rerun := ": run agent-pm-broker login github " + app + "."
-	missing := protocol.New(protocol.LoginRequired, "No GitHub bot user ID for "+app+rerun)
-	data, err := g.Keychain.Secret(usersService, app)
+	rerun := ": run agent-pm-broker login github " + AppKeyService + "."
+	missing := protocol.New(protocol.LoginRequired, "No GitHub App login"+rerun)
+	data, err := g.Keychain.Secret(usersService, AppKeyService)
 	switch {
 	case errors.Is(err, ErrNotFound):
 		return 0, missing
 	case err != nil:
 		return 0, protocol.New(protocol.KeychainFailed, "Keychain access to the GitHub bot user ID failed"+rerun)
 	}
-	id, err := strconv.ParseInt(string(data), 10, 64)
-	if err != nil || !userID.Match(data) {
+	var user botUser
+	if json.Unmarshal(data, &user) != nil || !github.Login.MatchString(user.Slug) || user.ID < 1 {
 		return 0, missing
 	}
-	return id, nil
+	if app != user.Slug {
+		return 0, protocol.New(protocol.ManifestRejected, "Manifest rejected: github app must be "+user.Slug+", the App login github saved.")
+	}
+	return user.ID, nil
 }
 
 func (g GitHub) appID(app string) (string, error) {
@@ -435,7 +450,7 @@ func expiries(entries []tokenEntry) []protocol.Expiry {
 // Issue gives container one token per installation of app, recording each before writing it in; on any failure
 // it revokes every token it issued.
 func (g GitHub) Issue(ctx context.Context, app, container string, exec func([]string, []byte) error) ([]protocol.Expiry, error) {
-	jwt, err := g.jwt(app)
+	jwt, err := g.jwt(AppKeyService)
 	if err != nil {
 		return nil, err
 	}
@@ -486,7 +501,7 @@ func (g GitHub) Refresh(ctx context.Context, app, container string, exec func([]
 	if !found {
 		return nil, protocol.New(protocol.RefreshFailed, "No GitHub tokens recorded for "+container+".")
 	}
-	jwt, err := g.jwt(app)
+	jwt, err := g.jwt(AppKeyService)
 	if err != nil {
 		return nil, err
 	}

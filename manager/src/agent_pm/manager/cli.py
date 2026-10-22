@@ -315,7 +315,7 @@ Examples:
 Next help:
   agent-pm-session --help          workers, clients, hosts and placement
   agent-pm-delegate run --help     roles and tasks
-  agent-pm-linear router --help    issue runs
+  agent-pm-orchestrator router --help    issue runs
 """,
     )
     common = argparse.ArgumentParser(add_help=False)
@@ -445,7 +445,7 @@ Examples:
             "issue",
             "ISSUE",
             "Start an attended issue run and track its Record",
-            f"{LayerCommand.LINEAR} router",
+            f"{LayerCommand.ORCHESTRATOR} router",
             """ISSUE is a configured board issue identifier and the roster entry name.
 Crew supplies router --issue ISSUE --tui, a session identity and events file.
 Requires board credentials, a configured role/client and an eligible issue;
@@ -737,6 +737,8 @@ Read pending events: agent-pm-crew pending --help
 for this reader only. Reads do not acknowledge handling; use ack afterward.
 Prints LINE EVENT, optionally followed by current owning-entry content.
 Default: wait for one event. --follow repeats until stopped or an error.
+Malformed complete lines exit 1 with the events path and physical line number;
+inspect with pending. An unfinished final line waits for its newline.
 Requires roster event access; no notification-delivery guarantee is implied.
 
 Examples:

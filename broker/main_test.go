@@ -47,7 +47,10 @@ func recording(calls *[]call) app {
 		refresh: func(ctx context.Context, container, manifest string) (any, error) {
 			return result("refresh")(ctx, container+" "+manifest, nil)
 		},
-		status:      func(ctx context.Context) (any, error) { return result("status")(ctx, "", nil) },
+		status: func(ctx context.Context) (any, error) { return result("status")(ctx, "", nil) },
+		probeOpencode: func(ctx context.Context, provider, base string) (any, error) {
+			return result("probe-provider")(ctx, provider+" "+base, nil)
+		},
 		workspaceRm: func(ctx context.Context, volume string, _ bool) (any, error) { return workspaceRm(ctx, volume, nil) }}
 }
 
@@ -59,7 +62,7 @@ func invoke(a app, args ...string) (int, string, string) {
 
 func TestVersion(t *testing.T) {
 	code, out, errOut := invoke(app{}, "version")
-	if code != 0 || out != `{"protocol_version":"16"}`+"\n" || errOut != "" {
+	if code != 0 || out != `{"protocol_version":"19"}`+"\n" || errOut != "" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	for _, c := range fixtures.Cases(t, "version_output") {
@@ -69,8 +72,29 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+func TestProbeOpencodeCommand(t *testing.T) {
+	calls := 0
+	a := app{probeOpencode: func(_ context.Context, provider, base string) (any, error) {
+		calls++
+		if provider != "strata" || base != "https://strata.test/v1" {
+			t.Fatal("wrong probe input")
+		}
+		return map[string]bool{"available": true}, nil
+	}}
+	code, out, errOut := invoke(a, "probe-provider", "--provider", "strata", "--base-url", "https://strata.test/v1")
+	if code != 0 || out != "{\"available\":true}\n" || errOut != "" || calls != 1 {
+		t.Fatalf("%d %s %s", code, out, errOut)
+	}
+	for _, args := range [][]string{{"probe-provider"}, {"probe-provider", "--provider", "../bad", "--base-url", "https://strata.test/v1"}, {"probe-provider", "--provider", "strata", "--base-url", "file:///tmp/key"}} {
+		code, _, _ = invoke(a, args...)
+		if code != 2 || calls != 1 {
+			t.Fatal("invalid probe dispatched")
+		}
+	}
+}
+
 func TestInputFixtures(t *testing.T) {
-	for _, c := range fixtures.Cases(t, "version_input", "build_input", "start_input", "refresh_input", "close_input", "status_input", "workspace_rm_input") {
+	for _, c := range fixtures.Cases(t, "version_input", "build_input", "start_input", "refresh_input", "close_input", "status_input", "workspace_rm_input", "probe_provider_input") {
 		t.Run(c.File, func(t *testing.T) {
 			var in struct{ Argv []string }
 			if err := json.Unmarshal(c.Data, &in); err != nil {
@@ -84,6 +108,8 @@ func TestInputFixtures(t *testing.T) {
 			if c.Valid {
 				want := call{in.Argv[0], ""}
 				switch in.Argv[0] {
+				case "probe-provider":
+					want.arg = in.Argv[2] + " " + in.Argv[4]
 				case "refresh":
 					want.arg = in.Argv[2] + " " + in.Argv[4]
 				case "version", "status":
@@ -166,6 +192,11 @@ func TestUsageErrors(t *testing.T) {
 		{"unknown", []string{"login", "github", "agent-pm-engineer"}},
 		{"unknown", []string{"login", "github", "agent-pm-docs"}},
 		{"unknown", []string{"login", "github", "agent-pm-bot", "x"}},
+		{"unknown", []string{"login", "github", "agent-pm-bot", "--key-file", "/k.pem"}},
+		{"unknown", []string{"login", "github", "agent-pm-bot", "--key-file", "/k.pem", "--app-id"}},
+		{"unknown", []string{"login", "github", "agent-pm-bot", "--app-id", "1", "--key-file", "/k.pem"}},
+		{"unknown", []string{"login", "github", "agent-pm-bot", "--key-file", "/k.pem", "--app", "1"}},
+		{"unknown", []string{"login", "github", "agent-pm-other", "--key-file", "/k.pem", "--app-id", "1"}},
 		{"unknown", []string{"login", "claude", "Work"}},
 		{"unknown", []string{"login", "claude", "setup-token"}},
 		{"unknown", []string{"login", "claude", "a", "b"}},
@@ -189,9 +220,12 @@ func TestUsageErrors(t *testing.T) {
 func TestLoginGitHubDispatch(t *testing.T) {
 	for _, name := range []string{"agent-pm-bot"} {
 		var got string
-		a := app{loginGitHub: func(ctx context.Context, app string, out io.Writer) error {
+		a := app{loginGitHub: func(ctx context.Context, app string, key *keyFile, out io.Writer) error {
 			if ctx == nil {
 				t.Error("no context")
+			}
+			if key != nil {
+				t.Errorf("key %+v without flags", key)
 			}
 			got = app
 			_, err := io.WriteString(out, "ok\n")
@@ -201,7 +235,7 @@ func TestLoginGitHubDispatch(t *testing.T) {
 			t.Fatalf("%s: exit %d app %q %q %q", name, code, got, out, errOut)
 		}
 	}
-	a := app{loginGitHub: func(context.Context, string, io.Writer) error { return errors.New("no item") }}
+	a := app{loginGitHub: func(context.Context, string, *keyFile, io.Writer) error { return errors.New("no item") }}
 	if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot"); code != 1 || out != "" || errOut != "agent-pm-broker: no item\n" {
 		t.Fatalf("exit %d %q %q", code, out, errOut)
 	}
@@ -231,18 +265,73 @@ func TestLoginClaudeDispatch(t *testing.T) {
 }
 
 func TestLoginOpencodeDispatch(t *testing.T) {
-	var got string
-	a := app{loginOpencode: func(provider string, out io.Writer) error {
-		got = provider
+	var got, file string
+	a := app{loginOpencode: func(provider, authFile string, out io.Writer) error {
+		got, file = provider, authFile
 		_, err := io.WriteString(out, "ok\n")
 		return err
 	}}
 	if code, out, errOut := invoke(a, "login", "opencode", "strata"); code != 0 || got != "strata" || out != "ok\n" || errOut != "" {
 		t.Fatalf("exit %d provider %q %q %q", code, got, out, errOut)
 	}
-	a = app{loginOpencode: func(string, io.Writer) error { return errors.New("no terminal") }}
+	if code, out, errOut := invoke(a, "login", "opencode", "strata", "--auth-file", "/tmp/auth.json"); code != 0 || got != "strata" || file != "/tmp/auth.json" || out != "ok\n" || errOut != "" {
+		t.Fatalf("exit %d provider %q path %q %q %q", code, got, file, out, errOut)
+	}
+	for _, args := range [][]string{
+		{"strata", "--auth-file"}, {"strata", "--auth-file", "relative"},
+		{"ollama", "--auth-file", "/tmp/auth.json"}, {"strata", "--other", "/tmp/auth.json"},
+		{"strata", "--auth-file", "/tmp/auth.json", "extra"},
+	} {
+		if code, _, _ := invoke(a, append([]string{"login", "opencode"}, args...)...); code != 2 {
+			t.Fatalf("accepted %q", args)
+		}
+	}
+	a = app{loginOpencode: func(string, string, io.Writer) error { return errors.New("no terminal") }}
 	if code, out, errOut := invoke(a, "login", "opencode", "strata"); code != 1 || out != "" || errOut != "agent-pm-broker: no terminal\n" {
 		t.Fatalf("exit %d %q %q", code, out, errOut)
+	}
+}
+
+func TestReadOpencodeAuth(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	key := "sk-SENTINEL-import"
+	for name, tc := range map[string]struct {
+		data string
+		ok   bool
+	}{
+		"api":              {`{"other":{"type":"oauth","access":"ignored"},"strata":{"type":"api","key":"` + key + `"}}`, true},
+		"missing provider": {`{"other":{"type":"api","key":"` + key + `"}}`, false},
+		"oauth":            {`{"strata":{"type":"oauth","key":"` + key + `"}}`, false},
+		"empty":            {`{"strata":{"type":"api","key":""}}`, false},
+		"missing key":      {`{"strata":{"type":"api"}}`, false},
+		"wrong key type":   {`{"strata":{"type":"api","key":["` + key + `"]}}`, false},
+		"wrong entry":      {`{"strata":"` + key + `"}`, false},
+		"null entry":       {`{"strata":null}`, false},
+		"array":            {`["` + key + `"]`, false},
+		"null":             {`null`, false},
+		"invalid":          {`{"strata":` + key, false},
+		"trailing":         {`{"strata":{"type":"api","key":"` + key + `"}} {}`, false},
+		"too large":        {strings.Repeat(" ", (1<<20)+1), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			data, err := readOpencodeAuth(path, "strata")
+			defer clear(data)
+			if tc.ok {
+				if err != nil || string(data) != key {
+					t.Fatal("API entry not read")
+				}
+			} else if err == nil || len(data) != 0 || strings.Contains(err.Error(), key) {
+				t.Fatal("invalid auth entry accepted or exposed")
+			}
+		})
+	}
+	for _, file := range []string{path + ".missing", filepath.Dir(path)} {
+		if data, err := readOpencodeAuth(file, "strata"); err == nil || len(data) != 0 {
+			t.Fatal("unreadable file accepted")
+		}
 	}
 }
 
@@ -332,8 +421,8 @@ func TestBuildPlugins(t *testing.T) {
 		maxAge  time.Duration
 	}{
 		{nil, nil, -1},
-		{[]string{"--plugin", "autopilot"}, []string{"autopilot"}, -1},
-		{[]string{"--plugin", "b", "--plugin", "a@m.x", "--max-age", "60"}, []string{"b", "a@m.x"}, time.Minute},
+		{[]string{"--plugin", "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217"}, []string{"autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217"}, -1},
+		{[]string{"--plugin", "b@o/r#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--plugin", "a@o/m.x#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--max-age", "60"}, []string{"b@o/r#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "a@o/m.x#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, time.Minute},
 	} {
 		var plugins []string
 		maxAge := time.Duration(-2)
@@ -587,7 +676,7 @@ func TestAuditHoldsNoSecret(t *testing.T) {
 	_ = json.Unmarshal(manifest, &m)
 	c := "agent-pm-" + m.Name + "-" + m.Generation
 	log := filepath.Join(t.TempDir(), "Library/Logs/agent-pm/broker.jsonl")
-	keys := memSecrets{"agent-pm-github-users/agent-pm-bot": []byte("343764394")}
+	keys := memSecrets{"agent-pm-github-users/agent-pm-bot": []byte(`{"slug":"agent-pm-bot","id":343764394}`)}
 	lock := broker.FileLock(filepath.Join(t.TempDir(), "tokens.lock"))
 	for _, command := range []string{"start", "refresh", "close"} {
 		rec := &audit.Recorder{Command: command, Now: time.Now, Log: audit.Log{Path: log}}
@@ -644,5 +733,41 @@ func TestAuditHoldsNoSecret(t *testing.T) {
 		"refresh github-installation-token renewed", "refresh github-installation-token revoked", "close github-installation-token revoked"}
 	if !slices.Equal(results, want) || !bytes.Contains(data, []byte(`"repositories":["ophis/agent-pm"]`)) {
 		t.Fatalf("%v\n%s", results, data)
+	}
+}
+
+// --key-file's content and --app-id reach login github; the file's bytes are erased after it returns.
+func TestLoginGitHubKeyFileDispatch(t *testing.T) {
+	const pemText = "-----BEGIN RSA PRIVATE KEY-----\nSENTINEL\n-----END RSA PRIVATE KEY-----\n"
+	path := filepath.Join(t.TempDir(), "app.pem")
+	if err := os.WriteFile(path, []byte(pemText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var seen *keyFile
+	var held string
+	a := app{loginGitHub: func(_ context.Context, app string, key *keyFile, out io.Writer) error {
+		seen, held = key, string(key.pem)
+		_, err := io.WriteString(out, "ok\n")
+		return err
+	}}
+	if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot", "--key-file", path, "--app-id", "5352992"); code != 0 || out != "ok\n" || errOut != "" {
+		t.Fatalf("exit %d %q %q", code, out, errOut)
+	}
+	if seen.id != "5352992" || held != pemText || !bytes.Equal(seen.pem, make([]byte, len(pemText))) {
+		t.Fatalf("key %q %q, after %q", seen.id, held, seen.pem)
+	}
+	big := filepath.Join(t.TempDir(), "big.pem")
+	if err := os.WriteFile(big, bytes.Repeat([]byte("k"), maxKeyFile+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for file, want := range map[string]string{
+		big:                       "agent-pm-broker: " + big + ": more than 16384 bytes\n",
+		filepath.Join(path, "no"): "agent-pm-broker: reading the App private key failed: open " + filepath.Join(path, "no") + ": not a directory\n",
+	} {
+		called := false
+		a := app{loginGitHub: func(context.Context, string, *keyFile, io.Writer) error { called = true; return nil }}
+		if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot", "--key-file", file, "--app-id", "5352992"); code != 1 || out != "" || errOut != want || called {
+			t.Fatalf("%s: exit %d %q %q called %v", file, code, out, errOut, called)
+		}
 	}
 }

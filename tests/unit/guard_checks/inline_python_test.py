@@ -16,7 +16,7 @@ class InlinePython(Sample):
             ("session", "engine"),
             ("delegate", "engine"),
             ("manager", "cli"),
-            ("linear_orchestrator", "engine"),
+            ("orchestrator", "engine"),
             ("utils", "record"),
         ):
             with self.subTest(module=module):

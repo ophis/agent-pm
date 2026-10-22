@@ -18,8 +18,8 @@ NO_ROLE = "no-such-role"
 OUTER = {
     "kind": "pipeline",
     "name": "TASK-1",
-    "ctl": ("agent-pm-linear",),
-    "resume": ("agent-pm-linear", "resume", "TASK-1"),
+    "ctl": ("agent-pm-orchestrator",),
+    "resume": ("agent-pm-orchestrator", "resume", "TASK-1"),
 }
 
 

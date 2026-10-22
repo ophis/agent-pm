@@ -1,7 +1,0 @@
-#!/bin/sh
-set -eu
-bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_dir=$(dirname -- "$bin_dir")
-export PATH="$bin_dir:$PATH"
-export PYTHONPATH="$repo_dir/utils/src:$repo_dir/session/src:$repo_dir/delegate/src:$repo_dir/linear-orchestrator/src"
-exec python3 -P -m agent_pm.linear_orchestrator.cli "$@"

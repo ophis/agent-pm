@@ -1,11 +1,11 @@
 from tests.case import REPO
 from tests.guard_checks import data_types
 from tests.guard_data import OPTION_TUPLES_ALLOWED, STANDALONE
-from tests.guard_data.linear_orchestrator import ORCH_PROJECT
+from tests.guard_data.orchestrator import ORCH_PROJECT
 from tests.guard_data.session import SESSION_SRC
 from tests.guard_samples import PKG, Sample
 
-OPKG = "src/agent_pm/linear_orchestrator"
+OPKG = "src/agent_pm/orchestrator"
 
 
 class SharedTypes(Sample):
@@ -40,21 +40,21 @@ class SharedTypes(Sample):
                 self.assertEqual(self.found(home, user), expected)
 
     def test_orchestrator_issue_data_types_have_no_exemption(self):
-        home = "linear-orchestrator/src/agent_pm/linear_orchestrator/engine"
+        home = "orchestrator/src/agent_pm/orchestrator/engine"
         for name in ("Issue", "Handoff", "Note", "Link", "Linked"):
             with self.subTest(name=name):
                 root = self.tree(
                     {
                         f"{home}/issues.py": self.DATA.replace("class A:", f"class {name}:"),
                         f"{home}/writeback.py": (
-                            f"from agent_pm.linear_orchestrator.engine.issues import {name}\n"
+                            f"from agent_pm.orchestrator.engine.issues import {name}\n"
                         ),
                     }
                 )
                 self.assertEqual(
                     data_types.shared_types(root),
                     [
-                        f"{home}/writeback.py:1: agent_pm.linear_orchestrator.engine.issues.{name}: a shared data type belongs in a types.py"
+                        f"{home}/writeback.py:1: agent_pm.orchestrator.engine.issues.{name}: a shared data type belongs in a types.py"
                     ],
                 )
 

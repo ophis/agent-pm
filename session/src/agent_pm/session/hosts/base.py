@@ -27,6 +27,7 @@ from agent_pm.session.engine.types import (
     NotShowable,
     Paste,
     Permission,
+    ProviderProbe,
     SessionError,
     SessionRow,
     StatusState,
@@ -222,6 +223,10 @@ class Host(ABC):
     """
 
     attachable: ClassVar[bool] = False
+
+    def _provider_usage(self, request: ProviderProbe) -> bool | None:
+        """Probe with this Host's credentials, when supported."""
+        return None
 
     def __init__(self, name: str, settings: Mapping | None = None) -> None:
         self.name = name

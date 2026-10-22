@@ -107,7 +107,10 @@ type api struct {
 	revoked   []string
 	issueFail map[int]int // nth issue (1-based) → status
 	revokeErr func(token string) int
+	slug      string // GET /app's slug; "": 404
+	appAuth   []string
 	user      string // the bot user answer; "": 404
+	userPath  string
 	userAuth  []string
 	reposFail int // the repository listing's status; 0: each installation reaches <login>/one and <login>/two
 	onRepos   func(token string)
@@ -155,7 +158,15 @@ func (a *api) handler(t *testing.T) http.HandlerFunc {
 			_, _ = fmt.Sscanf(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ghs_"), "%d_", &id)
 			login := a.installs[id-1]
 			_, _ = fmt.Fprintf(w, `{"total_count":2,"repository_selection":"all","repositories":[{"full_name":"%s/two"},{"full_name":"%s/one"}]}`, login, login)
-		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/users/agent-pm-bot%5Bbot%5D":
+		case r.Method == http.MethodGet && r.URL.Path == "/app":
+			a.appAuth = append(a.appAuth, r.Header.Get("Authorization"))
+			if a.slug == "" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"id":5352992,"slug":%q}`, a.slug)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/users/"):
+			a.userPath = r.URL.EscapedPath()
 			a.userAuth = append(a.userAuth, r.Header.Get("Authorization"))
 			if a.user == "" {
 				w.WriteHeader(http.StatusNotFound)
@@ -224,91 +235,130 @@ func wantCode(t *testing.T, err error, code protocol.Code) {
 	}
 }
 
+func TestAPIErrorIncludesGitHubMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "Validation Failed", "token": "fake-ignored-credential"})
+	}))
+	defer srv.Close()
+	c := github.Client{Base: srv.URL, HTTP: srv.Client()}
+	_, _, err := c.Issue(context.Background(), "fake-request-credential", 42)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	got := apiError(err)
+	wantCode(t, got, protocol.GitHubFailed)
+	if got.Message != `GitHub request failed: GitHub answered HTTP 422 to POST /app/installations/42/access_tokens: "Validation Failed".` {
+		t.Fatalf("unexpected protocol error: %v", got)
+	}
+}
+
+// A test App whose slug is not the key item's name.
+const (
+	slug        = "agentpm-test-bot"
+	botUserJSON = `{"login":"agentpm-test-bot[bot]","id":5405554,"type":"Bot"}`
+	savedUser   = `{"slug":"agentpm-test-bot","id":5405554}`
+)
+
 func TestReadyGitHub(t *testing.T) {
 	r := newRig(t)
-	if err := r.g.Ready("agent-pm-bot"); err != nil {
+	wantCode(t, r.g.Ready(slug), protocol.LoginRequired)
+	r.keys.items[usersService+"/"+AppKeyService] = []byte(savedUser)
+	if err := r.g.Ready(slug); err != nil {
 		t.Fatal(err)
 	}
-	wantCode(t, r.g.Ready("agent-pm-engineer"), protocol.ManifestRejected)
-	r.g.Apps = keys{err: ErrNotFound}
 	err := r.g.Ready("agent-pm-bot")
+	wantCode(t, err, protocol.ManifestRejected)
+	if err.(*protocol.Error).Message != "Manifest rejected: github app must be agentpm-test-bot, the App login github saved." {
+		t.Fatalf("%v", err)
+	}
+	r.g.Apps = keys{err: ErrNotFound}
+	err = r.g.Ready(slug)
 	wantCode(t, err, protocol.LoginRequired)
 	if !strings.Contains(err.Error(), "agent-pm-broker login github agent-pm-bot") {
 		t.Fatalf("message %v", err)
 	}
 	r.g.Apps = keys{account: "not-an-id", key: testAppKey(t)}
-	wantCode(t, r.g.Ready("agent-pm-bot"), protocol.LoginRequired)
+	wantCode(t, r.g.Ready(slug), protocol.LoginRequired)
 }
 
-const botUser = `{"login":"agent-pm-bot[bot]","id":343764394,"type":"Bot"}`
-
-func TestSaveUserSavesTheBotUserID(t *testing.T) {
+func TestSaveUserSavesTheAppSlugAndBotUserID(t *testing.T) {
 	r := newRig(t)
-	r.api.user = botUser
+	r.api.slug, r.api.user = slug, botUserJSON
 	var out strings.Builder
-	if err := r.g.SaveUser(context.Background(), "agent-pm-bot", &out); err != nil {
+	if err := r.g.SaveUser(context.Background(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(r.keys.items[usersService+"/agent-pm-bot"]); got != "343764394" {
+	if got := string(r.keys.items[usersService+"/"+AppKeyService]); got != savedUser {
 		t.Fatalf("saved %q", got)
 	}
-	if out.String() != "GitHub App agent-pm-bot bot user agent-pm-bot[bot] has ID 343764394\n" {
+	if out.String() != "GitHub App agentpm-test-bot bot user agentpm-test-bot[bot] has ID 5405554\n" {
 		t.Fatalf("output %q", out.String())
 	}
-	if !slices.Equal(r.api.userAuth, []string{""}) {
-		t.Fatalf("lookup sent Authorization %q", r.api.userAuth)
+	if r.api.userPath != "/users/agentpm-test-bot%5Bbot%5D" || !slices.Equal(r.api.userAuth, []string{""}) {
+		t.Fatalf("lookup %s sent Authorization %q", r.api.userPath, r.api.userAuth)
+	}
+	if len(r.api.appAuth) != 1 || !strings.HasPrefix(r.api.appAuth[0], "Bearer ey") {
+		t.Fatalf("GET /app sent %q, want the App JWT", r.api.appAuth)
 	}
 }
 
 func TestSaveUserRejects(t *testing.T) {
-	lookup := "looking up GitHub user agent-pm-bot[bot] failed: "
+	app := "looking up the GitHub App of the agent-pm-bot key failed: "
+	lookup := "looking up GitHub user agentpm-test-bot[bot] failed: "
 	rerun := "; rerun agent-pm-broker login github agent-pm-bot"
 	for name, c := range map[string]struct {
-		user, want string
-		putErr     error
-		down       bool
+		slug, user, want string
+		putErr           error
+		down             bool
 	}{
-		"absent":      {"", lookup + "GitHub answered HTTP 404" + rerun, nil, false},
-		"unreachable": {botUser, lookup + "GitHub unreachable: GET /users/agent-pm-bot%5Bbot%5D" + rerun, nil, true},
-		"not a bot":   {`{"login":"agent-pm-bot[bot]","id":1,"type":"User"}`, lookup + "GitHub answered no bot user with that login and a valid id" + rerun, nil, false},
-		"save fails":  {botUser, "saving the bot user ID of agent-pm-bot failed: " + errLeaky.Error(), errLeaky, false},
+		"no app":      {"", botUserJSON, app + "GitHub answered HTTP 404 to GET /app" + rerun, nil, false},
+		"absent":      {slug, "", lookup + "GitHub answered HTTP 404 to GET /users/agentpm-test-bot%5Bbot%5D" + rerun, nil, false},
+		"unreachable": {slug, botUserJSON, app + "GitHub unreachable: GET /app" + rerun, nil, true},
+		"not a bot":   {slug, `{"login":"agentpm-test-bot[bot]","id":1,"type":"User"}`, lookup + "GitHub answered no bot user with that login and a valid id" + rerun, nil, false},
+		"save fails":  {slug, botUserJSON, "saving the bot user ID of agentpm-test-bot failed: " + errLeaky.Error(), errLeaky, false},
 	} {
 		r := newRig(t)
-		r.api.user, r.keys.putErr = c.user, c.putErr
+		r.api.slug, r.api.user, r.keys.putErr = c.slug, c.user, c.putErr
 		if c.down {
 			r.srv.Close()
 		}
 		var out strings.Builder
-		err := r.g.SaveUser(context.Background(), "agent-pm-bot", &out)
+		err := r.g.SaveUser(context.Background(), &out)
 		if err == nil || err.Error() != c.want {
 			t.Errorf("%s: %v", name, err)
 		}
-		if _, ok := r.keys.items[usersService+"/agent-pm-bot"]; ok || out.Len() != 0 {
+		if _, ok := r.keys.items[usersService+"/"+AppKeyService]; ok || out.Len() != 0 {
 			t.Errorf("%s: saved or printed %q", name, out.String())
 		}
 	}
+	r := newRig(t)
+	r.g.Apps = keys{err: ErrNotFound}
+	wantCode(t, r.g.SaveUser(context.Background(), &strings.Builder{}), protocol.LoginRequired)
 }
 
 func TestBotUserID(t *testing.T) {
 	r := newRig(t)
-	r.keys.items[usersService+"/agent-pm-bot"] = []byte("343764394")
-	if id, err := r.g.BotUserID("agent-pm-bot"); err != nil || id != 343764394 {
+	item := usersService + "/" + AppKeyService
+	r.keys.items[item] = []byte(savedUser)
+	if id, err := r.g.BotUserID(slug); err != nil || id != 5405554 {
 		t.Fatalf("%d %v", id, err)
 	}
+	wantCode(t, func() error { _, err := r.g.BotUserID("agent-pm-bot"); return err }(), protocol.ManifestRejected)
 	rerun := ": run agent-pm-broker login github agent-pm-bot."
-	for _, bad := range []string{"0", "-1", "12a", "", "99999999999999999999"} {
-		r.keys.items[usersService+"/agent-pm-bot"] = []byte(bad)
-		_, err := r.g.BotUserID("agent-pm-bot")
+	for _, bad := range []string{"343764394", `{"slug":"agentpm-test-bot","id":0}`, `{"slug":"a b","id":1}`, "", "{"} {
+		r.keys.items[item] = []byte(bad)
+		_, err := r.g.BotUserID(slug)
 		wantCode(t, err, protocol.LoginRequired)
-		if err.(*protocol.Error).Message != "No GitHub bot user ID for agent-pm-bot"+rerun {
+		if err.(*protocol.Error).Message != "No GitHub App login"+rerun {
 			t.Fatalf("%q: %v", bad, err)
 		}
 	}
-	delete(r.keys.items, usersService+"/agent-pm-bot")
-	_, err := r.g.BotUserID("agent-pm-bot")
+	delete(r.keys.items, item)
+	_, err := r.g.BotUserID(slug)
 	wantCode(t, err, protocol.LoginRequired)
 	r.keys.unreadable[usersService] = true
-	_, err = r.g.BotUserID("agent-pm-bot")
+	_, err = r.g.BotUserID(slug)
 	wantCode(t, err, protocol.KeychainFailed)
 	if err.(*protocol.Error).Message != "Keychain access to the GitHub bot user ID failed"+rerun {
 		t.Fatalf("%v", err)

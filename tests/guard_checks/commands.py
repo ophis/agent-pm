@@ -55,7 +55,7 @@ def manager_commands(repo: str) -> list[str]:
                 len(values) >= 3
                 and values[:2] == [SESSION_COMMAND, "start"]
                 or len(values) >= 5
-                and values[:3] == ["agent-pm-linear", "router", "--issue"]
+                and values[:3] == ["agent-pm-orchestrator", "router", "--issue"]
                 and values[4] == "--tui"
                 or len(values) >= 7
                 and values[:3] == ["agent-pm-delegate", "run", "--role"]

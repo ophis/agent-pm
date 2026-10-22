@@ -222,7 +222,7 @@ func TestBuildCacheAndStages(t *testing.T) {
 		t.Fatalf("%q", probe)
 	}
 	stage2 := e.fake.calls[3]
-	want := []string{"build", "--progress=plain", "--build-arg", "USER_IMAGE=agent-pm-user:" + e.key, "--build-arg", "AGENT_PM_VERSION=1.2.3", "--build-arg", "AGENT_UID=1001", "--build-arg", "AGENT_GID=1002", "--build-arg", "AGENT_PM_PLUGIN_DIRS=", "--label", "agent-pm.key=" + e.key, "--tag", "agent-pm-worker:" + e.key}
+	want := []string{"build", "--progress=plain", "--no-cache", "--build-arg", "USER_IMAGE=agent-pm-user:" + e.key, "--build-arg", "AGENT_PM_VERSION=1.2.3", "--build-arg", "AGENT_UID=1001", "--build-arg", "AGENT_GID=1002", "--build-arg", "AGENT_PM_PLUGIN_DIRS=", "--label", "agent-pm.key=" + e.key, "--tag", "agent-pm-worker:" + e.key}
 	if !slices.Equal(stage2[:len(want)], want) || len(stage2) != len(want)+1 {
 		t.Fatalf("%q", stage2)
 	}
@@ -337,7 +337,7 @@ func TestWorkerImageHasItsScripts(t *testing.T) {
 		`'exec /opt/agent-pm/venv/bin/python -I /opt/agent-pm/session/src/agent_pm/session/hosts/docker/relay.py "$@"' > /opt/agent-pm/bin/relay`,
 		"chmod 755 /opt/agent-pm/bin/codex /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/bin/relay ",
 		"install -d -o agent -g agent -m 0700 /run/agent-pm /run/agent-pm/relay-queue",
-		"COPY bootstrap.py codex-update.py opencode-install.py hook-stub with-secrets workspace-check gh git-credential-agent-pm /opt/agent-pm/lib/",
+		"COPY bootstrap.py codex-update.py opencode-install.py plugin-install.py hook-stub with-secrets workspace-check gh git-credential-agent-pm /opt/agent-pm/lib/",
 		`python3 -I /opt/agent-pm/lib/opencode-install.py "$(dpkg --print-architecture)" /opt/agent-pm/clients`,
 		"ln -s /opt/agent-pm/clients/bin/opencode /opt/agent-pm/bin/opencode",
 		"COPY codex /opt/agent-pm/bin/codex",

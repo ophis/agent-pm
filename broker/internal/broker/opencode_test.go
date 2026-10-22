@@ -23,6 +23,7 @@ type fakeSecrets struct {
 	readErr  error
 	putErr   error
 	puts     []string
+	reads    []string
 	returned [][]byte
 }
 
@@ -35,6 +36,7 @@ func (k *fakeSecrets) AppAccess(service, account string) (AppAccess, error) {
 }
 
 func (k *fakeSecrets) Secret(service, account string) ([]byte, error) {
+	k.reads = append(k.reads, service+"/"+account)
 	if k.readErr != nil {
 		return nil, k.readErr
 	}
@@ -236,7 +238,7 @@ func TestOpencodeKeysInject(t *testing.T) {
 		"docker fails": {k: providerKeys("strata"), dockerErr: &docker.CommandError{Exit: 1, Stderr: "cat: " + apiKey}},
 		"unreachable":  {k: providerKeys("strata"), dockerErr: errors.Join(docker.ErrUnreachable, errors.New(apiKey)), unreachable: true},
 		"missing":      {k: providerKeys(), code: protocol.LoginRequired},
-		"needs dialog": {k: func() *fakeSecrets { k := providerKeys("strata"); k.readErr = ErrNeedsDialog; return k }(), code: protocol.LoginRequired},
+		"needs dialog": {k: func() *fakeSecrets { k := providerKeys("strata"); k.readErr = ErrNeedsDialog; return k }(), code: protocol.KeychainFailed},
 		"keychain fail": {k: func() *fakeSecrets {
 			k := providerKeys("strata")
 			k.readErr = errors.New("keychain status -25293")

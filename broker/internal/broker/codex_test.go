@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/ophis/agent-pm/broker/internal/codex"
+	"github.com/ophis/agent-pm/broker/internal/docker"
+	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
 type fakeCodexNative struct {
@@ -225,6 +227,57 @@ func TestCodexContainerPreflightFailures(t *testing.T) {
 				t.Fatal("failure leaked credentials, lock or executed injection")
 			}
 		})
+	}
+}
+
+func TestCodexWriteFailureCodeAndCause(t *testing.T) {
+	const full = "bootstrap: cannot write managed Codex credentials: No space left on device"
+	for _, tc := range []struct {
+		name, stderr, cause string
+		err                 error
+	}{
+		{"known", "Traceback (most recent call last):\n  File x\n" + full + "\n", full, nil},
+		{"fixed", "bootstrap: existing Codex credentials belong to another account\n", "bootstrap: existing Codex credentials belong to another account", nil},
+		{"slash", "bootstrap: cannot write managed Codex credentials: Input/output error\n", "bootstrap: cannot write managed Codex credentials: Input/output error", nil},
+		{"forged", "bootstrap: cannot write managed Codex credentials: eyJ.fake-id-secret.sig\n", "credential writer exited 1 without a known diagnostic", nil},
+		{"forged digits", "bootstrap: cannot write managed Codex credentials: fake/secret/42\n", "credential writer exited 1 without a known diagnostic", nil},
+		{"other", "fake-account-secret\n", "credential writer exited 1 without a known diagnostic", nil},
+		{"command", "", "credential writer failed", errors.New("context canceled")},
+	} {
+		for _, command := range []string{"start", "refresh"} {
+			t.Run(tc.name+"/"+command, func(t *testing.T) {
+				c, _, _ := codexFixture(t)
+				if err := c.Login(context.Background(), io.Discard); err != nil {
+					t.Fatal(err)
+				}
+				exec := func([]string, []byte) error {
+					if tc.err != nil {
+						return tc.err
+					}
+					return &docker.CommandError{Exit: 1, Stderr: tc.stderr}
+				}
+				var err error
+				want := protocol.StartFailed
+				if command == "start" {
+					_, err = c.Inject(context.Background(), exec)
+				} else {
+					want = protocol.RefreshFailed
+					_, err = c.Refresh(context.Background(), exec, func(string) error { return nil })
+				}
+				var e *protocol.Error
+				if !errors.As(err, &e) || e.Code != want || e.Cause != tc.cause || e.Message != "Writing Codex credentials into the container failed" {
+					t.Fatalf("%#v", err)
+				}
+			})
+		}
+	}
+	c, _, _ := codexFixture(t)
+	if err := c.Login(context.Background(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	_, err := c.Refresh(context.Background(), func([]string, []byte) error { return docker.ErrUnreachable }, func(string) error { return nil })
+	if !errors.Is(err, docker.ErrUnreachable) {
+		t.Fatalf("unreachable daemon reclassified: %v", err)
 	}
 }
 

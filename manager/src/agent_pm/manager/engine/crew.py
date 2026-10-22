@@ -106,7 +106,7 @@ def _reconciled(entry: Entry, status: Status) -> State:
 def _closed_run(work_dir: str, issue: str) -> tuple[str, str, str, str, str, str, str]:
     """An issue run's role, client, session id, cwd, agent name, Host and account ("": none, the
     session's ACCOUNT_ENV) from its run record,
-    `<work_dir>/work/<issue>/run/delegate.json` (docs/state-root.md); never run.jsonl, which its
+    `<work_dir>/work/<issue>/run/delegate.json`; never run.jsonl, which its
     agent can append to.
     """
     if not re.fullmatch(r"[A-Za-z0-9_-]+", issue):
@@ -277,7 +277,7 @@ class Crew:
             )
         elif kind == "issue":
             name = key
-            command = ("agent-pm-linear", "router", "--issue", key, "--tui", *argv)
+            command = ("agent-pm-orchestrator", "router", "--issue", key, "--tui", *argv)
         elif kind == "role":
             name = name if name is not None else f"{key}-{sid[:8]}"
             command = ("agent-pm-delegate", "run", "--role", key, "--detach", "--name", name, *argv)
@@ -674,9 +674,9 @@ class Crew:
                 identity = self.roster.event_identity()
             line, event = self.roster.next_event(cursor, gen, identity=identity)
             if event is not None:
-                cursor = line
-                if EVENT.fullmatch(event):
-                    return line, printable(event)
+                if not EVENT.fullmatch(event):
+                    raise RosterError(f"{self.roster.events_path}: invalid event at line {line}")
+                return line, printable(event)
             else:
                 time.sleep(0.5)
 

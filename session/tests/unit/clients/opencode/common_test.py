@@ -424,7 +424,8 @@ class SelectionTest(Case):
 
     def test_the_home_is_xdg_data_home_with_no_credential(self):
         self.assertEqual(
-            self.common.home(), ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none")
+            self.common.home(),
+            ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none", min_width=40),
         )
         host = DockerHost("docker", {"docker": "/usr/local/bin/docker", "isolated": True})
         data = os.path.join(self.home, ".agent-pm", "docker-state", "w", "opencode")
@@ -453,6 +454,15 @@ class SelectionTest(Case):
         )
         self.assertNotIn("home_providers", metadata)
 
+    def test_home_floors_the_container_window(self):
+        """Why: `HOME`'s comment in clients/opencode/common.py (TASK-841)."""
+        host = DockerHost("docker", {"docker": "/usr/local/bin/docker", "isolated": True})
+        _, metadata = BaseMode._hosted(self.spec, self.common.home(), host, "w")
+        self.assertEqual(metadata["home_min_width"], "40")
+        unfloored = replace(self.common.home(), min_width=0)
+        _, metadata = BaseMode._hosted(self.spec, unfloored, host, "w")
+        self.assertNotIn("home_min_width", metadata)
+
     def test_extra_flags_are_refused_with_the_reserved_ones(self):
         for flags in (("-c",), ("--prompt=x",), ("--pure",)):
             with self.subTest(flags=flags), self.assertRaises(ConfigError):
@@ -476,6 +486,11 @@ class SelectionTest(Case):
         self.assertEqual(json.loads(env["OPENCODE_CONFIG_CONTENT"])["plugin"], [plugin])
         plain = self.common.environment(self.spec, LOCAL_CONTEXT)
         self.assertNotIn("plugin", json.loads(plain["OPENCODE_CONFIG_CONTENT"]))
+
+    def test_container_loads_image_skills_and_host_has_no_image_path(self):
+        container = self.common.inline(self.spec, DOCKER_CONTEXT)
+        self.assertEqual(container["skills"], {"paths": ["/opt/agent-pm/plugins"]})
+        self.assertNotIn("skills", self.common.inline(self.spec, LOCAL_CONTEXT))
 
 
 class CompactionTest(Case):
@@ -544,6 +559,37 @@ class CompactionTest(Case):
 
 
 class UsageTest(Case):
+    def test_usage_selects_only_the_default_models_provider(self):
+        for model, tier_model in (
+            ("strata/default", "ollama/local"),
+            ("ollama/local", "strata/remote"),
+        ):
+            client = OpenCodeClient(
+                {
+                    **packaged_table(),
+                    "model": model,
+                    "tiers": {"1": tier_model, "2": tier_model},
+                    "providers": {"strata": {"base_url": "https://strata.test/v1", "models": []}},
+                }
+            )
+            with self.subTest(model=model):
+                request = client._provider_probe()
+                if model.startswith("strata/"):
+                    assert request is not None
+                    self.assertEqual(
+                        (request.provider, request.base_url), ("strata", "https://strata.test/v1")
+                    )
+                    self.assertEqual(
+                        client.usage_probe().argv[-3:],
+                        ("--provider", "strata", "https://strata.test/v1"),
+                    )
+                else:
+                    self.assertIsNone(request)
+                    self.assertEqual(client.usage_probe().argv[-1], "11434")
+        self.assertEqual(client.usage('{"available": true}'), Usage(None, None))
+        for bad in ('{"available": false}', '{"available": 1}', '{"available": true, "key": "x"}'):
+            self.assertIsNone(client.usage(bad))
+
     def test_the_probe_asks_the_hosts_ollama_on_its_port(self):
         client = OpenCodeClient({**packaged_table(), "ollama_port": 11500, "env": {"A": "b"}})
         launch = client.usage_probe()

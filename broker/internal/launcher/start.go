@@ -173,7 +173,9 @@ func mounts(m Manifest, labels map[string]string) ([]string, []audit.Mount) {
 	owner := ",mode=0700,uid=" + labels["agent-pm.agent-uid"] + ",gid=" + labels["agent-pm.agent-gid"]
 	if m.Client == "codex" {
 		tmpfs(runtimeDir, "rw,exec,nosuid,nodev,size=536870912,mode=0755,uid=0,gid=0")
-		tmpfs(m.CodexDir, "rw,noexec,nosuid,nodev,size=67108864"+owner)
+		// 1 GiB: Codex's log DB alone outgrows its 64 MiB budget (counts live rows only, never WAL or free pages)
+		// and no setting disables or caps it.
+		tmpfs(m.CodexDir, "rw,noexec,nosuid,nodev,size=1073741824"+owner)
 		tmpfs(docker.RunDir, "rw,noexec,nosuid,nodev,size=1048576"+owner)
 		bind(filepath.Join(m.CodexDir, "sessions"))
 	} else {

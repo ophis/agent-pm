@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/ophis/agent-pm/broker/internal/docker"
+	"github.com/ophis/agent-pm/broker/internal/github"
 	"github.com/ophis/agent-pm/broker/internal/launcher"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
@@ -55,12 +56,13 @@ var (
 	errAccessUnread = errors.New("reading its access failed")
 )
 
-// GitHubApps are the GitHub Apps the broker serves: login github's keychain services and the manifest's github app.
-var GitHubApps = map[string]bool{"agent-pm-bot": true}
+// AppKeyService is the item of the one GitHub App's private key (account its App ID) and login github's argument;
+// the App's own slug, whatever it is, comes from GitHub at login.
+const AppKeyService = "agent-pm-bot"
 
 // KeychainServices are every keychain service the broker reads or writes, one literal each: docs/credentials.md names
 // them all (tests/guard_checks/credentials.py reads this list). Declare each service as a package-level `...Service`
-// string constant or a GitHubApps key: TestKeychainServices pins this list to exactly those.
+// string constant: TestKeychainServices pins this list to exactly those.
 var KeychainServices = []string{
 	"agent-pm-claude",
 	"agent-pm-bot",
@@ -91,6 +93,12 @@ type AppKeychain interface {
 	ItemTrust
 	AppAccount(app string) (string, error)
 	AppKey(app, account string) ([]byte, error)
+}
+
+// AppKeyStore is login github --key-file's side: it creates the App private-key item.
+type AppKeyStore interface {
+	AppKeychain
+	PutSecret(service, account string, data []byte) error
 }
 
 // ACLEntry is one entry of a keychain item's access. Apps are the identities of the applications it trusts
@@ -301,6 +309,26 @@ func readsBack(token []byte, item, rerun string, get func() ([]byte, error)) err
 		return fmt.Errorf("keychain item %s: reading it failed: %w; %s", item, err, rerun)
 	}
 	return nil
+}
+
+// StoreAppKey creates app's private-key item, account id, from pem: an item the broker creates trusts only it for
+// reads, so LoginGitHub then needs only the partition list's password and no dialog. It refuses an existing item and
+// never names pem's bytes; the caller erases pem.
+func StoreAppKey(app, id string, pem []byte, k AppKeyStore) error {
+	if !appID.MatchString(id) {
+		return fmt.Errorf("App ID %q is not 1 to 20 digits", id)
+	}
+	if _, err := github.ParseKey(pem); err != nil {
+		return fmt.Errorf("not a GitHub App private key: %w", err)
+	}
+	switch _, err := k.AppAccount(app); {
+	case errors.Is(err, ErrNotFound):
+	case err == nil, errors.Is(err, ErrAmbiguous):
+		return fmt.Errorf("keychain item %s exists: run agent-pm-broker login github %s without --key-file, or delete it first", app, app)
+	default:
+		return err
+	}
+	return k.PutSecret(app, id, pem)
 }
 
 // LoginGitHub changes app's existing private-key item's ACL in place to trust only the broker (secureItem), then

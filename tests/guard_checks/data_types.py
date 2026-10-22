@@ -17,7 +17,7 @@ from tests.guard_checks.common import (
     _tree_files,
 )
 from tests.guard_data import OPTION_TUPLES_ALLOWED, STANDALONE
-from tests.guard_data.linear_orchestrator import ORCH_PROJECT, ORCH_SRC
+from tests.guard_data.orchestrator import ORCH_PROJECT, ORCH_SRC
 from tests.guards import PROJECTS
 
 OPTION_NAME = re.compile(r"_?[A-Z][A-Z0-9_]*")

@@ -8,36 +8,42 @@ from tests.guard_checks.credentials import _required_keys, _services, _violation
 from tests.guard_samples import Sample
 
 CONFIG = """
+work_dir = "~/.agent-pm"
+other_key = ""
+
+[roles.pm]
+max_runs = 3
+next = ""
+
+[linear]
 team = ""
 harness_key = ""
 task_label_group = ""
 agent_label_group = ""
-work_dir = "~/.agent-pm"
 
-[states]
+[linear.states]
 todo = ""
 done = ""
 
-[task_labels]
+[linear.task_labels]
 
-[agent_labels]
+[linear.agent_labels]
 
-[roles.pm]
+[linear.roles.pm]
 account = ""
 key = ""
-next = ""
 """
 
 KEYS = [
-    "harness_key",
-    "task_label_group",
-    "agent_label_group",
-    "states.todo",
-    "states.done",
-    "task_labels",
-    "agent_labels",
-    "roles.pm.key",
-    "roles.pm.account",
+    "linear.harness_key",
+    "linear.task_label_group",
+    "linear.agent_label_group",
+    "linear.states.todo",
+    "linear.states.done",
+    "linear.task_labels",
+    "linear.agent_labels",
+    "linear.roles.pm.key",
+    "linear.roles.pm.account",
 ]
 
 SERVICES = ["agent-pm-claude", "agent-pm-tokens"]
@@ -93,10 +99,17 @@ class CredentialsInventory(Sample):
                 )
 
     def test_a_key_named_without_backticks_is_missing(self):
-        text = inventory(missing={"states.todo"}) + "states.todo\n"
+        text = inventory(missing={"linear.states.todo"}) + "linear.states.todo\n"
         self.assertEqual(
             _violations(self.config(), SERVICES, text),
-            ["docs/credentials.md: missing config key `states.todo`"],
+            ["docs/credentials.md: missing config key `linear.states.todo`"],
+        )
+
+    def test_a_key_named_without_its_linear_prefix_is_missing(self):
+        text = inventory(missing={"linear.harness_key"}) + "`harness_key`\n"
+        self.assertEqual(
+            _violations(self.config(), SERVICES, text),
+            ["docs/credentials.md: missing config key `linear.harness_key`"],
         )
 
     def test_a_missing_service_is_reported(self):
@@ -137,7 +150,7 @@ class CredentialsInventory(Sample):
         root = self.tree(
             {
                 "docs/credentials.md": inventory(),
-                "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml": CONFIG,
+                "orchestrator/src/agent_pm/orchestrator/config.toml": CONFIG,
                 "broker/internal/broker/keychain.go": go,
             }
         )
@@ -153,7 +166,7 @@ class CredentialsInventory(Sample):
     def test_missing_files_and_list_are_violations(self):
         files = {
             "docs/credentials.md": inventory(),
-            "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml": CONFIG,
+            "orchestrator/src/agent_pm/orchestrator/config.toml": CONFIG,
             "broker/internal/broker/keychain.go": GO,
         }
         self.assertEqual(credentials.credentials_inventory(self.tree(files)), [])
@@ -168,13 +181,7 @@ class CredentialsInventory(Sample):
                     credentials.credentials_inventory(root),
                     ["broker/internal/broker/keychain.go: no KeychainServices list"],
                 )
-        root = self.tree(
-            {**files, "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml": "team ="}
-        )
+        root = self.tree({**files, "orchestrator/src/agent_pm/orchestrator/config.toml": "team ="})
         found = credentials.credentials_inventory(root)
         self.assertEqual(len(found), 1)
-        self.assertTrue(
-            found[0].startswith(
-                "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml: "
-            )
-        )
+        self.assertTrue(found[0].startswith("orchestrator/src/agent_pm/orchestrator/config.toml: "))

@@ -167,8 +167,7 @@ func (h Host) checkImage(ctx context.Context, image string) (imageInfo, error) {
 	return info, nil
 }
 
-// stage snapshots the worker image definition, the package, the named plugins and the embedded assets into tmp;
-// it returns the package version and the staged plugins' names.
+// stage snapshots the worker image definition, package, plugin sources and embedded assets into tmp.
 func (h Host) stage(pkg string, plugins []string, tmp string) (string, []string, error) {
 	userDir, packageDir := filepath.Join(tmp, "user"), filepath.Join(tmp, "package")
 	definition := filepath.Join(h.Home, ".agent-pm/docker/worker")
@@ -203,19 +202,16 @@ func (h Host) stage(pkg string, plugins []string, tmp string) (string, []string,
 			return "", nil, protocol.New(protocol.BuildFailed, "Cannot stage image assets.")
 		}
 	}
-	staged, err := h.stagePlugins(plugins, filepath.Join(packageDir, "plugins"))
+	staged, err := stagePlugins(plugins, packageDir)
 	if err != nil {
-		return "", nil, err
-	}
-	if err := stageCodexPlugins(staged, filepath.Join(packageDir, "plugins"), filepath.Join(packageDir, "codex-plugins")); err != nil {
 		return "", nil, err
 	}
 	return meta.Version, staged, nil
 }
 
 // Build produces agent-pm-worker:<key> in two stages; an image with this key and version built less than maxAge ago
-// is reused (maxAge < 0: of any age; 0: never). A rebuild builds the user stage without cache, so it installs the latest clients.
-// plugins name the account's installed Claude Code plugins the image holds; they are part of the key.
+// is reused (maxAge < 0: of any age; 0: never). Both stages rebuild without cache to refresh clients and plugins.
+// plugins name repository sources the image installs independently; they are part of the key.
 func (h Host) Build(ctx context.Context, pkg string, plugins []string, maxAge time.Duration) (BuildResult, error) {
 	tmp, err := docker.TempDir(h.Home, "agent-pm-build-")
 	if err != nil {
@@ -321,7 +317,7 @@ func (h Host) rebuild(ctx context.Context, tmp, key, version, plugins string) (B
 	if err := h.lease(key); err != nil {
 		return BuildResult{}, leaseFailed()
 	}
-	args := []string{"build", "--progress=plain", "--build-arg", "USER_IMAGE=" + userImage, "--build-arg", "AGENT_PM_VERSION=" + version,
+	args := []string{"build", "--progress=plain", "--no-cache", "--build-arg", "USER_IMAGE=" + userImage, "--build-arg", "AGENT_PM_VERSION=" + version,
 		"--build-arg", "AGENT_UID=" + uid, "--build-arg", "AGENT_GID=" + gid, "--build-arg", "AGENT_PM_PLUGIN_DIRS=" + plugins, "--label", "agent-pm.key=" + key, "--tag", image, filepath.Join(tmp, "package")}
 	if _, err := h.Docker.Run(ctx, args, nil); err != nil {
 		return BuildResult{}, diagnosed(err, protocol.BuildFailed, "Building the agent-pm image stage failed.")

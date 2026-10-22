@@ -1,5 +1,5 @@
 {
-  "protocol_version": "16",
+  "protocol_version": "19",
   "cases": [
     {
       "file": "manifest-valid.json",
@@ -1729,6 +1729,46 @@
     {
       "file": "start-output-missing-opencode.json",
       "definition": "start_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "probe-provider-input.json",
+      "definition": "probe_provider_input",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "probe-provider-input-invalid.json",
+      "definition": "probe_provider_input",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 2,
+        "error_code": "usage"
+      }
+    },
+    {
+      "file": "probe-provider-output.json",
+      "definition": "probe_provider_output",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "probe-provider-output-invalid.json",
+      "definition": "probe_provider_output",
       "valid": false,
       "expected": {
         "stage": "response",

@@ -1,3 +1,4 @@
+import errno
 import hashlib
 import http.client
 import io
@@ -7,9 +8,12 @@ import runpy
 import shutil
 import stat
 import tarfile
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+
+from agent_pm.session.clients.opencode.common import HOME
 
 from tests.case import REPO, Case
 
@@ -70,8 +74,12 @@ class CodexBootstrap(Case):
         self.target.mkdir()
         self.secrets = Path(self.home, "secrets")
         self.secrets.mkdir()
+        secrets = mock.patch.dict(self.code["inject_codex"].__globals__, {"SECRETS": self.secrets})
+        secrets.start()
+        self.addCleanup(secrets.stop)
         self.plugins = Path(self.home, "image-plugins")
-        (self.plugins / "inline").mkdir(parents=True)
+        (self.plugins / "plugins/cache").mkdir(parents=True)
+        (self.plugins / "config.toml").write_text("")
 
     def test_codex_home_has_file_auth_trusted_project_and_only_a_secret_link(self):
         import tomllib
@@ -89,20 +97,26 @@ class CodexBootstrap(Case):
         import tomllib
 
         for name in ("beta", "autopilot"):
-            (self.plugins / "inline" / name / "local").mkdir(parents=True)
+            (self.plugins / "plugins/cache/claude-autopilot" / name / "1.0.0").mkdir(parents=True)
+        (self.plugins / "config.toml").write_text(
+            '[plugins."autopilot@claude-autopilot"]\nenabled = true\n'
+            '[plugins."beta@claude-autopilot"]\nenabled = true\n'
+            '[marketplaces.private]\nsource = "ignored"\n'
+        )
         self.code["bootstrap_codex"](self.target, "/work/project", self.secrets, self.plugins)
         config = tomllib.loads((self.target / "config.toml").read_text())
         self.assertEqual(
             config["plugins"],
             {
-                "autopilot@inline": {"enabled": True},
-                "beta@inline": {"enabled": True},
+                "autopilot@claude-autopilot": {"enabled": True},
+                "beta@claude-autopilot": {"enabled": True},
             },
         )
         cache = self.target / "plugins/cache"
         self.assertTrue(cache.is_symlink())
-        self.assertEqual(cache.readlink(), self.plugins)
-        self.assertFalse((cache / "inline/autopilot/local").is_symlink())
+        self.assertEqual(cache.readlink(), self.plugins / "plugins/cache")
+        self.assertFalse((cache / "claude-autopilot/autopilot/1.0.0").is_symlink())
+        self.assertNotIn("marketplaces", config)
         self.assertFalse((self.target / "sessions").exists())
 
     def carrier(self, access="one", account="account"):
@@ -133,7 +147,7 @@ class CodexBootstrap(Case):
         path.unlink()
         path.write_bytes(self.carrier("native"))
         inject(io.BytesIO(self.carrier("two")), self.secrets, self.target)
-        self.assertFalse(path.is_symlink())
+        self.assertEqual(path.readlink(), self.secrets / "codex/auth.json")
         self.assertEqual(path.read_bytes(), self.carrier("two"))
         self.assertEqual(
             sorted(p.name for p in path.parent.iterdir()), ["auth.json", "config.toml", "plugins"]
@@ -145,6 +159,198 @@ class CodexBootstrap(Case):
         with mock.patch.dict(os.environ, {"CODEX_HOME": str(self.target)}):
             self.code["inject_codex"](io.BytesIO(self.carrier("renewed")), self.secrets)
         self.assertEqual(path.read_bytes(), self.carrier("renewed"))
+
+    def managed(self):
+        self.code["bootstrap_codex"](self.target, "/work/project", self.secrets, self.plugins)
+        self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        return self.target / "auth.json", self.secrets / "codex/auth.json"
+
+    def assert_only(self, directory, *names):
+        self.assertEqual(sorted(p.name for p in directory.iterdir()), sorted(names))
+
+    def test_refresh_writes_secret_and_keeps_link_without_codex_home_space(self):
+        link, secret = self.managed()
+        mkstemp, symlink = tempfile.mkstemp, os.symlink
+        full = OSError(errno.ENOSPC, "No space left on device")
+
+        def staged(*args, **kwargs):
+            if Path(kwargs["dir"]) == self.target:
+                raise full
+            return mkstemp(*args, **kwargs)
+
+        def linked(source, destination, *args, **kwargs):
+            if Path(destination).parent == self.target:
+                raise full
+            return symlink(source, destination, *args, **kwargs)
+
+        with (
+            mock.patch("tempfile.mkstemp", side_effect=staged),
+            mock.patch("os.symlink", side_effect=linked),
+        ):
+            self.code["inject_codex"](
+                io.BytesIO(self.carrier("renewed")), self.secrets, self.target
+            )
+        self.assertEqual(link.readlink(), secret)
+        self.assertEqual(secret.read_bytes(), self.carrier("renewed"))
+        self.assertEqual(stat.S_IMODE(secret.stat().st_mode), 0o400)
+        self.assert_only(self.target, "auth.json", "config.toml", "plugins")
+        self.assert_only(secret.parent, "auth.json")
+
+    def test_refresh_after_codex_replaced_link_restores_it(self):
+        link, secret = self.managed()
+        native = json.loads(self.carrier("native"))
+        native["agent_identity"] = {"agent_runtime_id": "runtime"}
+        link.unlink()
+        link.write_text(json.dumps(native, indent=2))
+        link.chmod(0o600)
+        self.code["inject_codex"](io.BytesIO(self.carrier("renewed")), self.secrets, self.target)
+        self.assertEqual(link.readlink(), secret)
+        self.assertEqual(secret.read_bytes(), self.carrier("renewed"))
+        self.assert_only(self.target, "auth.json", "config.toml", "plugins")
+        self.assert_only(secret.parent, "auth.json")
+
+    def test_refresh_after_codex_removed_link_restores_it(self):
+        link, secret = self.managed()
+        link.unlink()
+        self.code["inject_codex"](io.BytesIO(self.carrier("renewed")), self.secrets, self.target)
+        self.assertEqual(link.readlink(), secret)
+        self.assertEqual(secret.read_bytes(), self.carrier("renewed"))
+        self.assert_only(self.target, "auth.json", "config.toml", "plugins")
+
+    def test_auth_rejects_unsafe_destinations_with_distinct_messages(self):
+        link, secret = self.managed()
+        inject = self.code["inject_codex"]
+
+        def rejects(message, secrets=self.secrets):
+            with self.assertRaisesRegex(SystemExit, f"^bootstrap: {message}$"):
+                inject(io.BytesIO(self.carrier("two")), secrets, self.target)
+
+        secret.chmod(0o600)
+        secret.write_bytes(self.carrier(account="other"))
+        rejects("existing Codex credentials belong to another account")
+        secret.write_bytes(b"{")
+        rejects("existing Codex credentials are unreadable")
+        secret.write_bytes(json.dumps({"tokens": None}).encode())
+        rejects("existing Codex credentials are unreadable")
+        secret.unlink()
+        secret.mkdir()
+        rejects("managed Codex credential is not a regular file")
+        secret.rmdir()
+        link.unlink()
+        link.symlink_to(Path(self.home, "unrelated"))
+        rejects("CODEX_HOME/auth.json links elsewhere")
+        link.unlink()
+        os.mkfifo(link)
+        rejects("CODEX_HOME/auth.json is not a regular file")
+        link.unlink()
+        linked = Path(self.home, "linked-secrets")
+        linked.symlink_to(self.secrets)
+        rejects("managed Codex secret directory is a link", linked)
+        shutil.rmtree(secret.parent)
+        secret.parent.symlink_to(Path(self.home))
+        rejects("managed Codex secret directory is a link")
+        self.assertFalse(os.path.lexists(link))
+        self.assertFalse(Path(self.home, "auth.json").exists())
+
+    def test_write_failure_exits_with_reason_and_cleans_up(self):
+        link, secret = self.managed()
+        with (
+            mock.patch("os.replace", side_effect=OSError(28, "No space left on device")),
+            self.assertRaisesRegex(
+                SystemExit,
+                "^bootstrap: cannot write managed Codex credentials: No space left on device$",
+            ),
+        ):
+            self.code["inject_codex"](io.BytesIO(self.carrier("two")), self.secrets, self.target)
+        self.assertEqual(secret.read_bytes(), self.carrier())
+        self.assert_only(secret.parent, "auth.json")
+        self.assert_only(self.target, "auth.json", "config.toml", "plugins")
+
+    def test_auth_link_ignores_preexisting_directories(self):
+        old = self.target / f".auth-link-{os.getpid()}"
+        old.mkdir()
+        collision = self.target / (".auth-link-" + "00" * 16)
+        collision.mkdir()
+        with mock.patch("os.urandom", side_effect=[bytes(16), b"a" * 16]):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        self.assertEqual((self.target / "auth.json").readlink(), self.secrets / "codex/auth.json")
+        self.assertTrue(old.is_dir())
+        self.assertTrue(collision.is_dir())
+        self.assert_only(self.target, "auth.json", old.name, collision.name)
+
+    def test_failed_auth_link_creation_leaves_preexisting_directory_alone(self):
+        collision = self.target / (".auth-link-" + "00" * 16)
+        collision.mkdir()
+        with (
+            mock.patch("os.urandom", return_value=bytes(16)),
+            mock.patch("os.symlink", side_effect=OSError(errno.EIO, "Input/output error")),
+            self.assertRaisesRegex(
+                SystemExit,
+                "^bootstrap: cannot write managed Codex credentials: Input/output error$",
+            ),
+        ):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        self.assertTrue(collision.is_dir())
+        self.assert_only(self.target, collision.name)
+        self.assert_only(self.secrets / "codex", "auth.json")
+
+    def test_failed_auth_link_replace_cleans_link_and_preserves_native_file(self):
+        link = self.target / "auth.json"
+        link.write_bytes(self.carrier("native"))
+        replace = os.replace
+
+        def fail_link(source, destination):
+            if destination == link:
+                raise OSError(errno.EIO, "Input/output error")
+            return replace(source, destination)
+
+        with (
+            mock.patch("os.replace", side_effect=fail_link),
+            self.assertRaisesRegex(
+                SystemExit,
+                "^bootstrap: cannot write managed Codex credentials: Input/output error$",
+            ),
+        ):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        self.assertEqual(link.read_bytes(), self.carrier("native"))
+        self.assert_only(self.target, "auth.json")
+        self.assert_only(self.secrets / "codex", "auth.json")
+
+    def test_auth_cleanup_does_not_mask_write_failure(self):
+        unlink = Path.unlink
+        cleaned = []
+
+        def fail_cleanup(path, *args, **kwargs):
+            if path.name.startswith(".auth-"):
+                cleaned.append(path)
+                raise OSError(errno.EACCES, "Permission denied")
+            return unlink(path, *args, **kwargs)
+
+        def fail_replace(source, destination):
+            if destination == self.target / "auth.json":
+                raise OSError(errno.EIO, "Input/output error")
+            return replace(source, destination)
+
+        replace = os.replace
+        with (
+            mock.patch("os.replace", side_effect=fail_replace),
+            mock.patch.object(Path, "unlink", fail_cleanup),
+            self.assertRaisesRegex(
+                SystemExit,
+                "^bootstrap: cannot write managed Codex credentials: Input/output error$",
+            ),
+        ):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        self.assertEqual(len(cleaned), 2)
+        self.assertTrue(cleaned[1].is_symlink())
+
+    def test_auth_cleanup_does_not_turn_success_into_failure(self):
+        with mock.patch.object(
+            Path, "unlink", side_effect=OSError(errno.EACCES, "Permission denied")
+        ):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        self.assertEqual((self.target / "auth.json").readlink(), self.secrets / "codex/auth.json")
+        self.assert_only(self.target, "auth.json")
 
     def test_auth_rejects_account_change_secrets_and_arbitrary_links(self):
         inject = self.code["inject_codex"]
@@ -208,10 +414,16 @@ class CodexBootstrap(Case):
             self.code["main"](["codex-auth", str(self.target)])
         path = self.target / "auth.json"
         self.assertEqual(path.read_bytes(), self.carrier())
-        with mock.patch("os.replace", side_effect=OSError("failed")), self.assertRaises(OSError):
+        with (
+            mock.patch("os.replace", side_effect=OSError("failed")),
+            self.assertRaisesRegex(
+                SystemExit, "^bootstrap: cannot write managed Codex credentials"
+            ),
+        ):
             self.code["inject_codex"](io.BytesIO(self.carrier("two")), self.secrets, self.target)
         self.assertEqual(path.read_bytes(), self.carrier())
         self.assertEqual([p.name for p in self.target.iterdir()], ["auth.json"])
+        self.assertEqual([p.name for p in (self.secrets / "codex").iterdir()], ["auth.json"])
 
     def test_projection_writes_one_record_and_rejects_escape_or_links(self):
         stage = self.code["stage_runtime"]
@@ -1039,6 +1251,15 @@ class OpencodeInstall(Case):
         for argv in ([], ["arm64"], ["arm64", "relative"], ["arm64", "/p", "extra"]):
             with self.subTest(argv=argv), self.assertRaises(SystemExit):
                 self.ns["main"](argv)
+
+    def test_the_pinned_opencode_still_needs_the_window_floor(self):
+        self.assertEqual(
+            (self.ns["VERSION"], HOME.min_width),
+            ("1.19.3", 40),
+            "see HOME in clients/opencode/common.py: keep min_width while the broker's "
+            "opencodeMinVersion (broker/internal/launcher/versions.go) bundles @opentui/core "
+            "older than 0.5.3, then update this pin",
+        )
 
 
 class ImageLayer(Case):

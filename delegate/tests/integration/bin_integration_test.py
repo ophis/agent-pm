@@ -69,6 +69,29 @@ class Command(Case):
         self.assertEqual((done.returncode, done.stderr), (0, ""))
         self.assertEqual(re.search(r"\{([a-z,-]+)\}", done.stdout)[1].split(","), COMMANDS)
 
+    def test_a_colon_in_its_path_reruns_it_through_a_link(self):
+        """OpenCode caches the plugin under .../agent-pm@git+https:/...: PATH and PYTHONPATH split on ":"."""
+        repo = os.path.join(self.tmp, "agent-pm@git+https:", "agent-pm")
+        os.makedirs(repo)
+        for name in ("utils", "session", "delegate"):
+            os.symlink(os.path.join(REPO, name), os.path.join(repo, name))
+        shutil.copytree(os.path.join(REPO, "bin"), os.path.join(repo, "bin"))
+        path = MINIMAL
+        if not system_python_ok():
+            own = os.path.join(self.tmp, "python")
+            os.mkdir(own)
+            os.symlink(sys.executable, os.path.join(own, "python3"))
+            path = f"{own}:{MINIMAL}"
+        for _ in range(2):
+            done = self.run_bin(
+                path, "--help", bin_path=os.path.join(repo, "bin", "agent-pm-delegate")
+            )
+            self.assertEqual((done.returncode, done.stderr), (0, ""))
+            self.assertEqual(re.search(r"\{([a-z,-]+)\}", done.stdout)[1].split(","), COMMANDS)
+        links = os.path.join(self.home, ".agent-pm", "links")
+        [link] = os.listdir(links)
+        self.assertEqual(os.readlink(os.path.join(links, link)), repo)
+
     def test_it_sets_pythonpath_to_three_roots_and_puts_its_dir_first_on_path(self):
         repo = os.path.join(self.tmp, "repo")
         bin_dir = os.path.join(repo, "bin")

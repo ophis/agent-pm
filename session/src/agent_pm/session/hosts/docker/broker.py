@@ -1,4 +1,4 @@
-"""The root-owned broker at the PROTOCOL version (docs/docker-broker-protocol.md): version, build, start, refresh,
+"""The root-owned broker at the PROTOCOL version (protocol/docker-broker/protocol.schema.json): version, build, start, refresh,
 close and workspace-rm with strict response parsing. A missing, malformed or inconsistent response is a transport failure;
 a valid error response is a BrokerError.
 """
@@ -21,7 +21,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "16"
+PROTOCOL = "19"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -39,19 +39,29 @@ LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
 TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 COMMANDS = frozenset(
-    {"version", "build", "start", "refresh", "close", "status", "workspace-rm", "unknown"}
+    {
+        "version",
+        "build",
+        "start",
+        "refresh",
+        "close",
+        "status",
+        "workspace-rm",
+        "probe-provider",
+        "unknown",
+    }
 )
 CODES = {  # code → (exit code, the commands that report it)
     "usage": (2, COMMANDS),
     "manifest_rejected": (3, {"start", "refresh"}),
     "mount_rejected": (4, {"start", "refresh"}),
-    "login_required": (5, {"start", "refresh"}),
+    "login_required": (5, {"start", "refresh", "probe-provider"}),
     "image_rejected": (6, {"start"}),
     "docker_unreachable": (7, {"build", "start", "refresh", "close", "workspace-rm"}),
     "build_failed": (8, {"build"}),
     "start_failed": (9, {"start"}),
     "close_failed": (10, {"close"}),
-    "keychain_failed": (11, {"start", "refresh", "close", "status"}),
+    "keychain_failed": (11, {"start", "refresh", "close", "status", "probe-provider"}),
     "workspace_dirty": (12, {"workspace-rm"}),
     "workspace_rejected": (13, {"workspace-rm"}),
     "workspace_failed": (14, {"workspace-rm"}),
@@ -65,16 +75,24 @@ ERROR_OPTIONAL = frozenset({"cause", "cleanup_error", "container"})
 
 class BrokerError(SessionError):
     def __init__(
-        self, exit_code: int, code: str, message: str, cleanup: str, container: str | None
+        self,
+        exit_code: int,
+        code: str,
+        message: str,
+        cleanup: str,
+        container: str | None,
+        *,
+        cause: str | None = None,
     ) -> None:
-        self.exit_code, self.code, self.message, self.cleanup, self.container = (
+        self.exit_code, self.code, self.message, self.cleanup, self.container, self.cause = (
             exit_code,
             code,
             message,
             cleanup,
             container,
+            cause,
         )
-        super().__init__(f"broker: {message}")
+        super().__init__(f"broker: {message}" + (f" ({cause})" if cause else ""))
 
 
 class _Bad(Exception):
@@ -203,7 +221,9 @@ def _error(command: str, returncode: int, data: dict) -> BrokerError:
         and all(_text(error[key]) for key in ("message", "cause", "cleanup_error") if key in error)
     ):
         raise _Bad("error fields")
-    return BrokerError(exit_code, code, error["message"], cleanup, container)
+    return BrokerError(
+        exit_code, code, error["message"], cleanup, container, cause=error.get("cause")
+    )
 
 
 def _stream(argv, *, stdin, env, timeout) -> subprocess.CompletedProcess:
@@ -293,10 +313,21 @@ class Broker:
                 f" {INSTALL}"
             )
 
+    def probe_provider(self, provider: str, base_url: str) -> bool:
+        found = self._parsed(
+            "probe-provider",
+            lambda d: set(d) == {"available"} and type(d["available"]) is bool,
+            "--provider",
+            provider,
+            "--base-url",
+            base_url,
+        )
+        return found["available"]
+
     def build(
         self, package: str, *, plugins: Sequence[str] = (), max_age: int | None = None
     ) -> tuple[str, str]:
-        """`package`'s image tag and digest, the image holding the account's installed `plugins`;
+        """`package`'s image tag and digest, with `plugins` installed from repository sources;
         `max_age`: rebuild an image built at least that many seconds ago.
         """
         named = [arg for name in plugins for arg in ("--plugin", name)]

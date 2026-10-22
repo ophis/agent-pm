@@ -97,18 +97,29 @@ The Markdown an agent run delivers to its destination (report, PRD, PR descripti
 _Avoid_: document, result, report
 
 **Linear orchestrator**:
-The layer that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/`.
+The layer that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear. In code: `orchestrator/src/agent_pm/orchestrator/`.
 _Avoid_: orchestration layer, runner
 
 **Issue**:
-A Linear issue: the unit of work the Linear orchestrator claims for one role, and the place its agent runs report to. Chinese text says "issue" too.
+A Linear issue or a local board's issue file: the unit of work the Linear orchestrator claims for one role, and the place its agent runs report to. Chinese text says "issue" too.
 _Avoid_: ticket, card, 票
 
+**Tracker**:
+The interface the Linear orchestrator's engine reads and writes issues through, in abstract states (backlog, ready, running, review, approved, done, canceled), so its rules never build a tracker's queries. `[orchestrator] tracker` picks one: `local` (the default) or `linear`. Its archive capability holds the archive rule prune and `agent-pm-orchestrator issue archive` share: an issue archives only when it and every sub-issue are finished. In code: `Tracker` (`orchestrator/src/agent_pm/orchestrator/engine/flow/tracker.py`); its Linear adapter, `LinearTracker` (`trackers/linear/linear_tracker.py`); its local board adapter, `LocalTracker` (`trackers/local/local_tracker.py`). `cli.py` hands the engine each tracker's wiring (`Wiring`: its Connect, a run's reader and write-back `Accounts`, a role's account key, promote's and prune's board). Prune, promote, the router (its run's issue read and Related work search included) and write-back (session comments included) go through it; `engine/` imports nothing under `trackers/` but the router's Linear transport its `pyproject.toml` contract lists, and `engine/flow/` names no Linear concept.
+_Avoid_: backend
+
+**Local board**:
+A directory of Markdown issue files, `$AGENT_PM_BOARD_DIR` (default `~/.agent-pm/board/`), each file's directory its assignee and state (`<assignee>/<state>/`, or flat `archive/`), its runtime state in `<board>/.state/`; one directory is one board, never synced. The router, `writeback`, `resume`, `promote`, `prune` and `issue` run on one. `scripts/install.sh --board local --launchd` optionally schedules router and promote (which also prunes); without jobs, run them on demand. Format: `docs/board.md` › Local board. In code: `orchestrator/src/agent_pm/orchestrator/trackers/local/`.
+
+**Workflow**:
+The board's stages, one per orchestrated role: its input layout, the role promote hands its Handoff issues to, whether a Handoff needs instructions, its title prefix and its write-back comment leads. In code: a file of `[[stage]]` tables, the packaged `orchestrator/src/agent_pm/orchestrator/engine/flow/workflow.toml` unless `[orchestrator] workflow` names another, which `config.load()` reads into `config.TASKS` (`engine/flow/workflow.py`).
+_Avoid_: pipeline, TASKS
+
 **Write-back**:
-The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/writeback.py`.
+The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `orchestrator/src/agent_pm/orchestrator/engine/writeback.py`.
 
 **Overlay**:
-The core run keys the Linear orchestrator adds to its own agent runs, in `linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml`'s `[core]` table (its comment).
+The core run keys the Linear orchestrator adds to its own agent runs, in `orchestrator/src/agent_pm/orchestrator/config.toml`'s `[core]` table (its comment).
 
 **Manager**:
 The top layer: the commander session you talk to (`/agent-pm:manage`) and its crew. In code: `manager/src/agent_pm/manager/`.
