@@ -617,6 +617,7 @@ class TuiMode(BaseMode):
             events=state["events"],
         )
         try:
+            run._context = host._client_context()
             run.restore(spec, state["client_hook"]["state"] if "client_hook" in state else {})
         except ConfigError as e:
             raise SessionError(f"no tui session {name}: {e}") from None
