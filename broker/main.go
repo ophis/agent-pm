@@ -26,7 +26,7 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude [NAME] | login github agent-pm-bot [--key-file PEM --app-id ID] | login opencode PROVIDER | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | probe-provider --provider NAME --base-url URL | workspace-rm --volume NAME [--force]"
+const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude [NAME] | login github agent-pm-bot [--key-file PEM --app-id ID] | login opencode PROVIDER [--auth-file FILE] | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | probe-provider --provider NAME --base-url URL | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
@@ -46,7 +46,7 @@ type app struct {
 	login         func(account string, out io.Writer) error                                // login claude [NAME]
 	loginGitHub   func(ctx context.Context, app string, key *keyFile, out io.Writer) error // key: nil without --key-file
 	loginCodex    func(context.Context, io.Writer) error
-	loginOpencode func(provider string, out io.Writer) error
+	loginOpencode func(provider, authFile string, out io.Writer) error
 	installCodex  func(context.Context, string, bool) (any, error)
 }
 
@@ -76,6 +76,39 @@ func readKeyFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("%s: more than %d bytes", path, maxKeyFile)
 	}
 	return data, nil
+}
+
+// readOpencodeAuth reads only provider's API entry. Errors never include JSON contents or decoder details.
+func readOpencodeAuth(path, provider string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, errors.New("cannot read OpenCode auth.json")
+	}
+	defer f.Close()
+	const maxAuthFile = 1 << 20
+	data, err := io.ReadAll(io.LimitReader(f, maxAuthFile+1))
+	defer clear(data)
+	if err != nil || len(data) > maxAuthFile {
+		return nil, errors.New("cannot read OpenCode auth.json (limit 1 MiB)")
+	}
+	var entries map[string]json.RawMessage
+	err = json.Unmarshal(data, &entries)
+	defer func() {
+		for _, entry := range entries {
+			clear(entry)
+		}
+	}()
+	if err != nil {
+		return nil, errors.New("OpenCode auth.json is not a JSON object")
+	}
+	var entry struct {
+		Type string `json:"type"`
+		Key  string `json:"key"`
+	}
+	if json.Unmarshal(entries[provider], &entry) != nil || entry.Type != "api" || entry.Key == "" {
+		return nil, fmt.Errorf("OpenCode auth.json has no API key for provider %s", provider)
+	}
+	return []byte(entry.Key), nil
 }
 
 func main() {
@@ -133,7 +166,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 					return a.loginGitHub(ctx, args[2], &keyFile{id: args[6], pem: pem}, stdout)
 				}
 			case len(args) == 3 && args[1] == "opencode" && launcher.ValidProvider(args[2]):
-				login = func() error { return a.loginOpencode(args[2], stdout) }
+				login = func() error { return a.loginOpencode(args[2], "", stdout) }
+			case len(args) == 5 && args[1] == "opencode" && launcher.ValidProvider(args[2]) && args[3] == "--auth-file" && isPath(args[4]):
+				login = func() error { return a.loginOpencode(args[2], args[4], stdout) }
 			}
 			if login != nil {
 				if err := login(); err != nil {
@@ -348,7 +383,7 @@ func system() app {
 			}
 			return tokens(home, nil).SaveUser(ctx, out)
 		},
-		loginOpencode: func(provider string, out io.Writer) error {
+		loginOpencode: func(provider, authFile string, out io.Writer) error {
 			home, err := accountHome()
 			if err != nil {
 				return err
@@ -357,6 +392,9 @@ func system() app {
 				return err
 			}
 			return broker.LoginOpencode(provider, func() ([]byte, error) {
+				if authFile != "" {
+					return readOpencodeAuth(authFile, provider)
+				}
 				fmt.Fprint(os.Stderr, "OpenCode provider "+provider+" API key (hidden): ")
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()
