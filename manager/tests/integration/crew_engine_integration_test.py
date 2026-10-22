@@ -1029,18 +1029,18 @@ class CrewTest(Case):
             self.assertEqual(delay, 0.5)
             observed.append(Roster(self.directory).backlog())
             with open(path, "a", encoding="utf-8") as stream:
-                stream.write("noise\n12:00:01 worker blocked\n")
+                stream.write("12:00:01 worker blocked\n")
 
         with mock.patch("time.sleep", side_effect=wait):
             result = self.crew.next_event(after=2, gen=0)
         self.assertEqual(observed, [(0, 0, ["12:00:00 worker done", "diagnostic"])])
-        self.assertEqual(result, (4, "12:00:01 worker blocked"))
-        self.assertEqual(len(self.roster.backlog()[2]), 4)
+        self.assertEqual(result, (3, "12:00:01 worker blocked"))
+        self.assertEqual(len(self.roster.backlog()[2]), 3)
         successor = Crew(Roster(self.directory))
         self.assertEqual(successor.next_event(after=2, gen=0), result)
         self.assertEqual(self.roster.backlog()[0], 0)
         self.roster.advance(2, 0)
-        self.assertEqual(self.roster.backlog(), (2, 0, ["noise", "12:00:01 worker blocked"]))
+        self.assertEqual(self.roster.backlog(), (2, 0, ["12:00:01 worker blocked"]))
 
     def test_next_event_refuses_replacement_deletion_shrink_and_unsafe_file_while_waiting(self):
         path = self.roster.events
@@ -1094,7 +1094,7 @@ class CrewTest(Case):
         self.assertEqual(waiting, [0.5])
         self.assertFalse(Path(self.roster.path).exists())
 
-    def test_backlog_and_next_event_filter_diagnostics_keep_physical_line_numbers(self):
+    def test_attach_filters_diagnostics_but_next_event_reports_their_physical_line(self):
         with open(self.roster.events, "a", encoding="utf-8") as stream:
             stream.write("diagnostic\n12:00:00 worker outcome done\ngarbage\n")
         with self.listed():
@@ -1103,7 +1103,8 @@ class CrewTest(Case):
         self.assertNotIn("diagnostic", table)
         self.assertNotIn("garbage", table)
         self.assertTrue(table.endswith("N=0 GEN=0\n"))
-        self.assertEqual(self.crew.next_event(after=0, gen=0), (2, "12:00:00 worker outcome done"))
+        with self.assertRaisesRegex(RosterError, "invalid event at line 1"):
+            self.crew.next_event(after=0, gen=0)
 
     def test_launch_does_not_pass_its_managers_lease_to_the_worker(self):
         with self.roster.hold("owner") as lease:

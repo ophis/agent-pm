@@ -7,6 +7,7 @@ import io
 import os
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.manager.engine.crew import GRACE, HEADER, START_TIMEOUT, Crew, _run_start
@@ -18,6 +19,44 @@ from manager.tests.starters import answered, finished
 from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
 
 ARGV = ("fake-ctl", "start", "x")
+
+
+class EventReading(RosterCase):
+    def test_malformed_complete_line_fails_without_consuming_the_following_event(self):
+        path = Path(self.roster.events)
+        for invalid in ("", "diagnostic", "12:00 worker done", "not an event\r"):
+            with self.subTest(invalid=invalid):
+                path.write_text(f"12:00:00 worker done\n{invalid}\n12:00:01 worker blocked\n")
+                with self.assertRaisesRegex(RosterError, f"{path}: invalid event at line 2"):
+                    Crew(self.roster).next_event(after=1, gen=0)
+                self.assertEqual(
+                    self.roster.backlog(),
+                    (0, 0, ["12:00:00 worker done", invalid, "12:00:01 worker blocked"]),
+                )
+
+    def test_malformed_line_at_eof_fails_instead_of_waiting_for_another_event(self):
+        Path(self.roster.events).write_text("diagnostic\n")
+        with (
+            mock.patch("time.sleep", side_effect=TimeoutError("polled past malformed line")),
+            self.assertRaisesRegex(RosterError, "invalid event at line 1"),
+        ):
+            Crew(self.roster).next_event(after=0, gen=0)
+
+    def test_partial_tail_is_not_consumed_and_completion_is_returned(self):
+        path = Path(self.roster.events)
+        path.write_text("12:00:00 worker do")
+
+        def complete(_delay):
+            self.assertEqual(self.roster.backlog(), (0, 0, []))
+            with path.open("a") as stream:
+                stream.write("ne\n")
+
+        with mock.patch("time.sleep", side_effect=complete) as waiting:
+            self.assertEqual(
+                Crew(self.roster).next_event(after=0, gen=0), (1, "12:00:00 worker done")
+            )
+        waiting.assert_called_once_with(0.5)
+        self.assertEqual(self.roster.backlog()[0], 0)
 
 
 class Run(RosterCase):
