@@ -9,15 +9,16 @@ import io
 import json
 import os
 import re
+import shutil
 import urllib.error
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.delegate import HarnessDelegate, Outcome
+from agent_pm.delegate import DelegateEvent, HarnessDelegate, Outcome
 from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import (
     config,
@@ -25,6 +26,7 @@ from agent_pm.orchestrator.engine import (
     related,
     router,
     runs,
+    writeback,
 )
 from agent_pm.orchestrator.engine import gate as quota
 from agent_pm.orchestrator.engine.flow.types import IssueState, Pick
@@ -3050,7 +3052,7 @@ class RunLaunching(OuterBase):
     def test_build_detaches_its_linear_run_after_its_start_row(self):
         self.assertEqual(self.outer(), 0)
         self.assertEqual(self.detached(), self.expected())
-        self.assertEqual((len(self.api.detached), os.path.lexists(self.rd)), (1, True))
+        self.assertEqual((len(self.api.detached), os.path.lexists(self.rd)), (1, False))
         self.assertEqual(self.api.runs_at_detach, [self.raw_runs()])
         self.assertEqual(
             json.loads(self.raw_runs()),
@@ -3201,6 +3203,65 @@ class RunLaunching(OuterBase):
         requirements, earlier = self.input().split("## Earlier comments", 1)
         self.assertIn("Add another line.", requirements)
         self.assertNotIn("Add another line.", earlier)
+
+    def test_done_build_then_new_run_recovers_old_comments_from_tracker_after_cleanup(self):
+        old = {**USER_NOTE, "body": "Delivered line.", "createdAt": "2026-10-22T08:44:37Z"}
+        later = {**USER_NOTE, "body": "Add another line.", "createdAt": "2026-10-22T08:44:38Z"}
+        self.gql.issue = node(comments=[old])
+        self.assertEqual(self.outer(), 0)
+        cfg = self.cfg()
+        accounts = functools.partial(self.wiring.claimed, self.gql, cfg)
+        for kind, fields in (
+            ("begun", {}),
+            ("progress", {"name": "start", "text": "first build"}),
+            (
+                "finished",
+                {"returncode": 0, "outcome": asdict(Outcome("done", "Build", "Delivered"))},
+            ),
+        ):
+            event = DelegateEvent.parse(
+                json.dumps({"v": 1, "kind": kind, "sid": SID, "attempt": 1, **fields})
+            )
+            self.assertTrue(
+                writeback.deliver(
+                    cfg,
+                    ID,
+                    self.rd,
+                    event,
+                    accounts=accounts,
+                    now=lambda: "2026-10-22T08:44:37.900Z",
+                )
+            )
+        comments = [old, later]
+        for body, _issue in self.gql.comments.values():
+            if body.startswith(("Build started", "Build ready")):
+                comments.append(
+                    {
+                        "body": body,
+                        "createdAt": "2026-10-22T08:44:37.900Z"
+                        if body.startswith("Build started")
+                        else "2026-10-22T08:45:00Z",
+                        "user": {
+                            "email": "engineer@agents.test",
+                            "name": "Engineer",
+                            "isMe": False,
+                        },
+                    }
+                )
+        self.assertEqual(len(comments), 4)
+        self.gql.issue = node(comments=comments)
+        for cleanup in ("none", "ledger", "workdir"):
+            with self.subTest(cleanup=cleanup):
+                if cleanup == "ledger":
+                    os.remove(os.path.join(self.rd, writeback.LEDGER))
+                elif cleanup == "workdir":
+                    shutil.rmtree(self.rd)
+                self.assertEqual(self.outer(sid=str(uuid.uuid4())), 0)
+                requirements, earlier = self.input().split("## Earlier comments", 1)
+                self.assertIn("Add another line.", requirements)
+                self.assertNotIn("Delivered line.", requirements)
+                self.assertIn("Delivered line.", earlier)
+                self.assertNotIn("Add another line.", earlier)
 
     def test_target_gets_the_runs_delegate_class_and_workdir(self):
         cfg = self.cfg()

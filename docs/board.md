@@ -117,7 +117,7 @@ A run that ended leaves its TUI open for pane follow-ups; the issue's next run, 
 
 Each session's `Run <sid>` comment holds its resume command. Move the issue out of In Progress before opening it, or the router may resume it after 30 idle minutes.
 
-Build inputs mark user comments as already built only through the input snapshot of a real `done` outcome whose write-back completed. Start comments, interruptions, usage limits, failed runs and questions leave requirements pending. Comments added after that snapshot remain requirements, including after resume. If delivery evidence is missing, the next input keeps the requirements.
+Build inputs mark user comments as already built through the latest build start followed by a successful build delivery comment on the issue. An unfinished start leaves the previous boundary intact; with no delivered build, comments remain requirements. Comments after that start remain requirements, including after resume. This boundary survives workdir cleanup and upgrades because it uses existing tracker comments.
 
 ### Run limits
 
@@ -288,7 +288,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. With `tracker = "lin
 | `config.local.toml` | never: your settings |
 | `work/<ID>/agent/` | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
 | `work/<ID>/run/` | once you won't attach or resume the run; by hand where prune never reaches: the run's delegate kind is no longer configured, or the issue was deleted in Linear |
-| `work/<ID>/writeback.json`, `writeback.lock` | once the issue will never build again, resume or be recovered: deleting the ledger loses its delivered-comment boundary, and Recover replays missing write-back; where prune never reaches: as `work/<ID>/run/` |
+| `work/<ID>/writeback.json`, `writeback.lock` | once you won't resume or recover the run: Recover replays missing write-back; where prune never reaches: as `work/<ID>/run/`. The delivered-comment boundary comes from the issue's build start and successful delivery comments, so cleanup does not lose it |
 | `logs/runs.jsonl` | never ([Operating](#operating)) |
 | `logs/orchestrator.jsonl`, `.1`, `.lock` | any time; keep `logs/` ([Setup](#setup) step 4) |
 | `logs/prune.json` | any time: the next tick reads Linear again |

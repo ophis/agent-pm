@@ -145,7 +145,7 @@ class BuildInputs(Case):
             note("agent early", "2026-09-03T00:00:00.000Z"),
             note("Build started: https://github.com/o/r/tree/b", "2026-09-04T00:00:00.000Z"),
             note("at the cutoff", "2026-09-04T00:00:00.000Z", ANN),
-            note("Question: which?", "2026-09-05T00:00:00.000Z"),
+            note("Build ready: done", "2026-09-05T00:00:00.000Z"),
             note("Use Redis.", "2026-09-06T00:00:00.000Z", ANN),
             note("Manager says", "2026-09-07T00:00:00.000Z", MANAGER),
             note("Bob says more", "2026-09-08T00:00:00.000Z", ("bob@example.com", "Bob")),
@@ -168,7 +168,7 @@ class BuildInputs(Case):
         self.assertIn("Ann, 2026-10-22T08:44:37.000Z:\nAdd another line.", requirements)
         self.assertNotIn("Add another line.", earlier)
 
-    def test_comments_after_the_delivered_snapshot_remain_requirements(self):
+    def test_comments_after_the_delivered_build_start_remain_requirements(self):
         cutoff = "2026-10-22T08:44:37.000Z"
         text = inputs.render(
             issue(
@@ -177,7 +177,7 @@ class BuildInputs(Case):
                 notes=(
                     note("Delivered line.", cutoff, ANN),
                     note("Add another line.", "2026-10-22T08:44:37.100Z", ANN),
-                    note("Build started", "2026-10-22T08:44:37.900Z"),
+                    note("Build started", cutoff),
                     note("Build ready", "2026-10-22T09:00:00.000Z"),
                 ),
             ),
@@ -185,7 +185,6 @@ class BuildInputs(Case):
             inputs.Sources((), None),
             target=self.TARGET,
             docs=DOCS,
-            build_cutoff=cutoff,
         )
         requirements, earlier = text.split("## Earlier comments", 1)
         self.assertIn("Add another line.", requirements)
@@ -211,7 +210,6 @@ class BuildInputs(Case):
             src,
             target=self.TARGET,
             docs=DOCS,
-            build_cutoff="2026-09-04T00:00:00.000Z",
         )
         self.assertEqual(
             got,
@@ -260,7 +258,7 @@ class BuildInputs(Case):
                 "- Ann, 2026-09-04T00:00:00.000Z:",
                 "  > at the cutoff",
                 "- Researcher, 2026-09-05T00:00:00.000Z:",
-                "  > Question: which?",
+                "  > Build ready: done",
             ),
         )
 

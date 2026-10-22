@@ -2,7 +2,7 @@
 
 import dataclasses
 
-from agent_pm.orchestrator.engine import issues
+from agent_pm.orchestrator.engine import config, issues
 from agent_pm.orchestrator.engine.flow import handoff
 from agent_pm.orchestrator.engine.flow.types import (
     Issue,
@@ -13,6 +13,7 @@ from agent_pm.orchestrator.engine.flow.types import (
 from agent_pm.orchestrator.trackers.linear import linear_tracker
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from orchestrator_tests.case import Case
+from orchestrator_tests.unit.board_ids import PACKAGED_FLOW, workflow_file
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
@@ -255,3 +256,99 @@ class Brief(Case):
         ):
             with self.subTest(description=description):
                 self.assertEqual(issues.brief(issue(description)), want)
+
+
+class BuildCutoff(Case):
+    CREATED = "2026-09-01T00:00:00.000Z"
+    START = "2026-10-22T08:44:37.900Z"
+    DONE = "2026-10-22T08:45:00.000Z"
+    NEXT = "2026-10-22T09:14:37.900Z"
+
+    def cutoff(self, *notes):
+        return issues.build_cutoff(issue(created_at=self.CREATED, notes=notes))
+
+    def test_a_start_without_delivery_does_not_consume_comments(self):
+        for body in ("Build started", "Build started: light-build", "\n Build started: x\n"):
+            with self.subTest(body=body):
+                self.assertEqual(self.cutoff(note(body, self.START)), self.CREATED)
+
+    def test_only_successful_build_delivery_qualifies_a_start(self):
+        for body in ("Build ready", "Build ready: done", "\n Build ready: done\n"):
+            with self.subTest(body=body):
+                self.assertEqual(
+                    self.cutoff(note("Build started", self.START), note(body, self.DONE)),
+                    self.START,
+                )
+        for body in ("Build failed: no", "Question: which?", "Build readyness", "build ready"):
+            with self.subTest(body=body):
+                self.assertEqual(
+                    self.cutoff(note("Build started", self.START), note(body, self.DONE)),
+                    self.CREATED,
+                )
+
+    def test_later_unfinished_build_keeps_the_previous_delivered_boundary(self):
+        self.assertEqual(
+            self.cutoff(
+                note("Build started: next", self.NEXT),
+                note("Build ready: done", self.DONE),
+                note("Build started: first", self.START),
+            ),
+            self.START,
+        )
+
+    def test_latest_delivered_start_wins_by_time_not_position_or_iso_spelling(self):
+        self.assertEqual(
+            self.cutoff(
+                note("Build ready", "2026-10-22T11:20:00+02:00"),
+                note("Build started: next", self.NEXT),
+                note("Build ready", self.DONE),
+                note("Build started: first", self.START),
+            ),
+            self.NEXT,
+        )
+
+    def test_human_lookalikes_and_other_stages_do_not_qualify_a_build(self):
+        for start, done in (
+            (note("Build started", self.START, origin="other"), note("Build ready", self.DONE)),
+            (note("Build started", self.START), note("Build ready", self.DONE, origin="other")),
+            (note("Research started", self.START), note("Build ready", self.DONE)),
+            (note("Build startedness", self.START), note("Build ready", self.DONE)),
+            (note("Build started", self.START), note("Research ready", self.DONE)),
+        ):
+            with self.subTest(start=start, done=done):
+                self.assertEqual(self.cutoff(start, done), self.CREATED)
+
+    def test_completion_without_a_preceding_start_has_no_boundary(self):
+        self.assertEqual(self.cutoff(note("Build ready", self.DONE)), self.CREATED)
+        self.assertEqual(
+            self.cutoff(note("Build ready", self.START), note("Build started", self.DONE)),
+            self.CREATED,
+        )
+
+    def test_leads_come_from_the_loaded_workflow(self):
+        config.TASKS.load(
+            workflow_file(
+                PACKAGED_FLOW.replace('start = "Build started:"', 'start = "Coding:"').replace(
+                    'done = "Build ready:"', 'done = "Delivered:"'
+                )
+            )
+        )
+        self.assertEqual(
+            self.cutoff(note("Coding: go", self.START), note("Delivered: done", self.DONE)),
+            self.START,
+        )
+        self.assertEqual(
+            self.cutoff(note("Build started", self.START), note("Build ready", self.DONE)),
+            self.CREATED,
+        )
+
+    def test_empty_start_or_done_lead_cannot_qualify_a_boundary(self):
+        for lead in ('start = "Build started:"', 'done = "Build ready:"'):
+            with self.subTest(lead=lead):
+                config.TASKS.load(
+                    workflow_file(PACKAGED_FLOW.replace(lead, lead.split("=")[0] + '= ""'))
+                )
+                self.assertEqual(
+                    self.cutoff(note("Build started", self.START), note("Build ready", self.DONE)),
+                    self.CREATED,
+                )

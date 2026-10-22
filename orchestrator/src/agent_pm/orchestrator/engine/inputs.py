@@ -6,7 +6,6 @@ import fnmatch
 import json
 import re
 from dataclasses import dataclass
-from functools import partial
 from urllib.parse import quote, unquote
 
 from agent_pm.orchestrator.engine import config, issues
@@ -261,9 +260,9 @@ def _design(issue, sources, target, docs):
     )
 
 
-def _build(issue, sources, target, docs, *, cutoff):
+def _build(issue, sources, target, docs):
     h = issue.handoff
-    cutoff = parse_time(cutoff or issue.created_at)
+    cutoff = parse_time(issues.build_cutoff(issue))
     new = [n for n in issue.notes if issues.is_user(n) and parse_time(n.at) > cutoff]
     old = [n for n in issue.notes if n not in new]
     dirs = _design_dirs(docs)
@@ -346,11 +345,6 @@ def render(
     target,
     docs,
     related: Related | None = None,
-    build_cutoff: str | None = None,
 ) -> str:
-    layout = {
-        "research": _research,
-        "design": _design,
-        "build": partial(_build, cutoff=build_cutoff),
-    }[TASKS[role].input]
+    layout = {"research": _research, "design": _design, "build": _build}[TASKS[role].input]
     return _join([layout(issue, sources, target, docs), _related(related or Related())])

@@ -133,7 +133,6 @@ from agent_pm.utils import (
     exhausted,
     nested_start,
     one_line,
-    parse_time,
     summary,
 )
 
@@ -791,7 +790,6 @@ def _outer(a, cfg, *, gql, run, keychain, wiring, now, attended):
         target=repo,
         docs=cfg.docs,
         related=found,
-        build_cutoff=writeback.build_cutoff(ctx) if build else None,
     ).replace("\x00", "")
     # a lone surrogate cannot be encoded
     text = text.encode("utf-8", "replace").decode()
@@ -824,17 +822,8 @@ def _outer(a, cfg, *, gql, run, keychain, wiring, now, attended):
             raise
         if a.mode == "new":
             record(cfg, a, role=role, key=key, target=slug, now=now)
-        if build:
-            writeback.prepare_input(
-                ctx,
-                max(
-                    (n.at for n in issue.notes if n.origin == "other"),
-                    key=parse_time,
-                    default=issue.created_at,
-                ),
-            )
         detached = linear_run.detach()
-    except (ConfigError, delegate.ConfigError, delegate.SessionError, OSError) as e:
+    except (ConfigError, delegate.ConfigError, delegate.SessionError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
         return 1
     if attended:

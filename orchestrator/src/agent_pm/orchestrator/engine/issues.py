@@ -1,4 +1,10 @@
-"""The Handoff's reader-side helpers: brief and is_user."""
+"""The Handoff's reader-side helpers: brief, is_user and build_cutoff."""
+
+import re
+from functools import cache
+
+from agent_pm.orchestrator.engine.flow import workflow
+from agent_pm.utils import parse_time
 
 
 def is_user(note) -> bool:
@@ -8,3 +14,27 @@ def is_user(note) -> bool:
 def brief(issue) -> str:
     h = issue.handoff
     return h.instructions if h else issue.description
+
+
+@cache
+def _lead_re(lead):
+    lead = lead.removesuffix(":")
+    return re.compile(rf"{re.escape(lead)}\b" if lead else r"(?!)")
+
+
+def build_cutoff(issue) -> str:
+    """A start consumes comments only after a successful build delivery on the tracker."""
+    cutoff = issue.created_at
+    notes = sorted((n for n in issue.notes if not is_user(n)), key=lambda n: parse_time(n.at))
+    for task in workflow.DEFAULT.values():
+        if task.input != "build":
+            continue
+        start, done = _lead_re(task.start), _lead_re(task.done)
+        started = None
+        for note in notes:
+            body = note.body.strip()
+            if start.match(body):
+                started = note.at
+            elif done.match(body) and started is not None:
+                cutoff = max((cutoff, started), key=parse_time)
+    return cutoff
