@@ -332,7 +332,7 @@ System Settings › Privacy & Security › Local Network › Docker), or the pro
 3. Pull every `ollama/` model of the tiers and `model`, `ollama pull qwen3.6:35b-mlx` by default
    (`[session.clients.opencode.tiers]`; `ollama_port`, default 11434, is its port).
 
-The image supplies OpenCode 1.x and its provider config; none of the Mac's OpenCode install, config or plugins goes into the container. The cwd's own `opencode.json` and `.opencode/` still load: OpenCode has no project trust. An existing `~/.agent-pm/docker/worker/Dockerfile` needs no edit. Session state stays in `~/.agent-pm/docker-state/<name>/opencode/`. Start a worker with `agent-pm-crew worker NAME --client opencode`; board setup: [Board › OpenCode](board.md#opencode). Its window stays at least 40 columns wide because narrower windows crash Bun on Linux.
+The image supplies OpenCode 1.x and its provider config; none of the Mac's OpenCode install, config or plugins goes into the container. The cwd's own `opencode.json` and `.opencode/` still load: OpenCode has no project trust. An existing `~/.agent-pm/docker/worker/Dockerfile` needs no edit. Session state stays in `~/.agent-pm/docker-state/<name>/opencode/`. Start a worker with `agent-pm-crew worker NAME --client opencode`; board setup: [Board › OpenCode](board.md#opencode). Its window stays at least 40 columns wide because OpenCode 1.19.3's OpenTUI crashes its home screen in a window under 38 columns.
 
 ### Lifecycle
 

@@ -51,6 +51,8 @@ from agent_pm.utils import (
 
 TABLE = "[clients.opencode]"
 # A container Host's session state dir: OpenCode keeps opencode.db under $XDG_DATA_HOME/opencode.
+# min_width: OpenCode 1.19.3's OpenTUI 0.4.5 crashes its home screen under 38 columns on Linux;
+# fixed in OpenTUI 0.5.3 (anomalyco/opentui#1361).
 HOME = ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none", min_width=40)
 HERE = os.path.dirname(os.path.abspath(__file__))
 STORE = f"{STATE}/sessions/opencode"  # under HOME, resolved per call

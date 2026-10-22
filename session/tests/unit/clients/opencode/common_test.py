@@ -455,7 +455,7 @@ class SelectionTest(Case):
         self.assertNotIn("home_providers", metadata)
 
     def test_home_floors_the_container_window(self):
-        """OpenCode 1.19.3's Bun segfaults on Linux at 37 columns or fewer (TASK-821)."""
+        """Why: `HOME`'s comment in clients/opencode/common.py (TASK-841)."""
         host = DockerHost("docker", {"docker": "/usr/local/bin/docker", "isolated": True})
         _, metadata = BaseMode._hosted(self.spec, self.common.home(), host, "w")
         self.assertEqual(metadata["home_min_width"], "40")
