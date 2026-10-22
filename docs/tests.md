@@ -41,6 +41,7 @@ has none, and CI's Ruff step still catches it.
 | one four-process unit job | `python3 .github/run_tests.py Unit --unit --parallel 4 --shard 1/2` |
 | one complete test ID | `python3 .github/run_tests.py Integration manager.tests.integration.crew_close_all_integration_test.CloseAllTest.test_close_all_closes_what_mgr_opened_and_only_that` |
 | one test file | `python3 .github/run_tests.py Integration manager/tests/integration/crew_close_all_integration_test.py` |
+| one repository integration shard | `python3 .github/run_tests.py 'Repository integration 1' tests/integration --shard 1/8` |
 | integration shard (labels in `.github/workflows/test.yml`) | `python3 .github/integration_jobs.py <N>` |
 
 Run tests only through these supervised, sandboxed entries; they retain diagnostics and cleanup.
@@ -50,8 +51,20 @@ selected test's dependencies (tmux for live tmux tests; `node` for the OpenCode 
 failure annotation or summary; no shard number is needed. Files must be repository test
 files named `*_test.py`; invalid, missing, empty or ambiguous selections fail without
 running a broader suite.
+Directory and file selections accept a trailing `--shard N/TOTAL`, using sorted test IDs
+with complete, disjoint coverage. Invalid, empty or duplicate-ID shards fail.
 Subtest annotations use the method ID and keep parameters in the error text; selecting
 that method runs all its subtests.
+
+The `repository` matrix in `.github/workflows/test.yml` runs eight jobs,
+`Repository tests 1` through `Repository tests 8`, when full scope is selected.
+Each job runs one supervised shard using `--shard N/8`; `fail-fast: false` lets all
+shards finish, every shard retains source protection and the unchanged-checkout guard,
+and the existing `CI` dependency on `repository` waits for the entire matrix.
+The CLI help matrix is split by surface and configuration so its long parameter loops
+can land on different shards; both help flags and all three entry modes remain covered.
+Compare all eight job durations with the other jobs, including setup and cleanup;
+the target is about 3.5 minutes per job, with headroom below 15 minutes.
 
 Docker protocol fixtures need `python3 -m pip install jsonschema==4.26.0` (test only).
 Run `python3 .github/run_tests.py Protocol tests/unit/docker_broker_protocol_test.py tests/unit/docker_relay_protocol_test.py`.
