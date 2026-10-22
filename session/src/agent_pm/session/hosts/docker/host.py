@@ -508,7 +508,7 @@ class DockerTerminal(InteractiveProcess):
             self.host.broker.close(self.container)
         except SessionError as error:
             failures.append(str(error))
-        self.host.reclaim()
+        self.host._spawn_reclaim()
         if failures:
             raise SessionError(f"docker session {self.name}: {'; '.join(failures)}")
 
@@ -658,9 +658,34 @@ class DockerHost(Host):
             except (SessionError, OSError) as error:
                 LOG.warning("docker sweep %s: %s", row.name, error)
 
+    def _spawn_reclaim(self) -> None:
+        """Detach the close's cleanup, so broker checks outlive the caller without delaying it."""
+        try:
+            state = os.path.expanduser(DOCKER_STATE)
+            os.makedirs(state, mode=0o700, exist_ok=True)
+            fd = os.open(
+                os.path.join(state, "reclaim.log"),
+                os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW,
+                0o600,
+            )
+            with os.fdopen(fd, "a") as log:
+                roots = module_roots(sys.modules[__name__], agent_pm.utils)
+                proc = subprocess.Popen(
+                    [os.path.realpath(sys.executable), "-P", "-s", "-m", __name__, self.docker],
+                    env={"PATH": os.defpath, "HOME": os.path.expanduser("~"), **source_path(roots)},
+                    cwd="/",
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=log,
+                    start_new_session=True,
+                )
+            threading.Thread(target=proc.wait, daemon=True).start()
+        except OSError as error:
+            LOG.warning("docker reclaim: %s", error)
+
     def reclaim(self) -> None:
-        """At a close, never a start: removes one run workspace volume whose workdir is gone, after
-        the broker's check (up to its 120 s). One with unsaved work is kept for good, one whose check
+        """Background close pass: removes all run workspace volumes whose workdir is gone, after
+        the broker's check (up to its 120 s each). One with unsaved work is kept for good, one whose check
         failed for KEPT_RETRY; each is warned about once and marked. Listed before the lock, so no
         orphan writes no file.
         """
@@ -689,21 +714,21 @@ class DockerHost(Host):
                 return
             for marker in set(os.listdir(kept)) - {row[0] for row in rows} - {KEPT_LOCK}:
                 os.unlink(os.path.join(kept, marker))
-            volume = next((v for v in gone if not _held(os.path.join(kept, v))), None)
-            if volume is None:
-                return
-            marker = os.path.join(kept, volume)
-            try:
-                self.broker.workspace_rm(volume)
-            except BrokerError as error:
-                save(marker, "dirty" if error.code == "workspace_dirty" else "failed")
-                LOG.warning("docker workspace %s kept: %s", volume, error.message)
-            except SessionError as error:
-                save(marker, "failed")
-                LOG.warning("docker workspace %s kept: %s", volume, error)
-            else:
-                with contextlib.suppress(FileNotFoundError):
-                    os.unlink(marker)
+            for volume in gone:
+                marker = os.path.join(kept, volume)
+                if _held(marker):
+                    continue
+                try:
+                    self.broker.workspace_rm(volume)
+                except BrokerError as error:
+                    save(marker, "dirty" if error.code == "workspace_dirty" else "failed")
+                    LOG.warning("docker workspace %s kept: %s", volume, error.message)
+                except SessionError as error:
+                    save(marker, "failed")
+                    LOG.warning("docker workspace %s kept: %s", volume, error)
+                else:
+                    with contextlib.suppress(FileNotFoundError):
+                        os.unlink(marker)
 
     def _sweep_row(self, row: Row) -> None:
         if _piped(row.name, row.generation):
@@ -1243,7 +1268,7 @@ class DockerHost(Host):
             self.broker.close(container)
         except SessionError as error:
             LOG.warning("docker session %s: %s", name, error)
-        self.reclaim()
+        self._spawn_reclaim()
 
     def _serve_relay(self, container: str, generation: str) -> None:
         argv, env = docker_call(self.docker, "exec", "-d", container, RELAY, "serve", generation)
@@ -1397,3 +1422,7 @@ class DockerHost(Host):
             printed=f"{shlex.join(argv[:-1])} '{argv[-1]}'",
             argv=("/usr/bin/env", *(arg for key in CLEARED for arg in ("-u", key)), *argv),
         )
+
+
+if __name__ == "__main__":
+    DockerHost("docker", {"docker": sys.argv[1]}).reclaim()
