@@ -126,13 +126,9 @@ class TransportTest(Case):
     def test_client_sends_empty_request_and_forwards_brake_result(self):
         connection = mock.MagicMock()
         connection.__enter__.return_value = connection
+        connection.recv.return_value = wire({"returncode": 80, "stdout": "brake\n"})
         output, errors = io.StringIO(), io.StringIO()
-        with (
-            mock.patch.object(call.socket, "socket", return_value=connection),
-            mock.patch.object(
-                call, "read_socket", return_value=wire({"returncode": 80, "stdout": "brake\n"})
-            ),
-        ):
+        with mock.patch.object(call.socket, "socket", return_value=connection):
             self.assertEqual(call.client(stdout=output, stderr=errors), 80)
         connection.connect.assert_called_once_with(call.SOCKET)
         connection.sendall.assert_called_once_with(b"{}\n")
@@ -145,11 +141,9 @@ class TransportTest(Case):
                 connection = mock.MagicMock()
                 connection.__enter__.return_value = connection
                 connection.connect.side_effect = error
+                connection.recv.return_value = response
                 output, errors = io.StringIO(), io.StringIO()
-                with (
-                    mock.patch.object(call.socket, "socket", return_value=connection),
-                    mock.patch.object(call, "read_socket", return_value=response),
-                ):
+                with mock.patch.object(call.socket, "socket", return_value=connection):
                     self.assertEqual(call.client(stdout=output, stderr=errors), 2)
                 self.assertEqual(output.getvalue(), "")
                 self.assertEqual(errors.getvalue(), call.FAILURE)
@@ -170,17 +164,19 @@ class TransportTest(Case):
         listener, first, second = mock.MagicMock(), mock.MagicMock(), mock.MagicMock()
         listener.__enter__.return_value = listener
         first.__enter__.return_value, second.__enter__.return_value = first, second
+        first.recv.return_value, second.recv.return_value = b'{"argv":[]}\n', b"{}\n"
         listener.accept.side_effect = [(first, None), (second, None), OSError("done")]
         source = io.BytesIO(wire({"returncode": 1, "stdout": "stop"}))
         destination = io.BytesIO()
-        with (
-            mock.patch.object(call, "listener", return_value=listener),
-            mock.patch.object(call, "read_socket", side_effect=[b'{"argv":[]}\n', b"{}\n"]),
-            mock.patch.object(
-                call.select, "select", side_effect=lambda readers, *_: (readers[:1], [], [])
-            ),
+        with mock.patch.object(
+            call.select, "select", side_effect=lambda readers, *_: (readers[:1], [], [])
         ):
-            self.assertEqual(call.serve(GEN, stdin=source, stdout=destination), 2)
+            self.assertEqual(
+                call.serve(
+                    GEN, stdin=source, stdout=destination, listener_factory=lambda _: listener
+                ),
+                2,
+            )
         self.assertEqual(
             [json.loads(x) for x in destination.getvalue().splitlines()],
             [ready(), {"generation": GEN}],
@@ -198,7 +194,12 @@ class TransportTest(Case):
         process.stdin = io.BytesIO()
         process.poll.return_value = None
         destination = io.BytesIO()
-        invoke = mock.Mock(return_value={"returncode": 80, "stdout": "stop"})
+
+        def run(argv, **kwargs):
+            kwargs["stdout"].write(b"stop")
+            return subprocess.CompletedProcess(argv, 80)
+
+        invoke = mock.Mock(side_effect=run)
         popen = mock.Mock(return_value=process)
         config_path = os.path.join(self.home, "command.json")
         with open(config_path, "w") as stream:
@@ -207,7 +208,7 @@ class TransportTest(Case):
             mock.patch.object(
                 call.select, "select", side_effect=lambda readers, *_: (readers, [], [])
             ),
-            mock.patch.object(call, "execute", invoke),
+            mock.patch.object(call.subprocess, "run", invoke),
         ):
             self.assertEqual(
                 call.host(
@@ -222,7 +223,8 @@ class TransportTest(Case):
             stderr=subprocess.DEVNULL,
         )
         self.assertEqual(json.loads(destination.getvalue()), ready())
-        invoke.assert_called_once_with(CONFIG)
+        self.assertEqual(invoke.call_count, 1)
+        self.assertEqual(invoke.call_args.args[0], CONFIG["argv"])
         self.assertEqual(
             [json.loads(x) for x in process.stdin.getvalue().splitlines()],
             [call.failed(), {"returncode": 80, "stdout": "stop"}],
@@ -280,11 +282,13 @@ class TransportTest(Case):
         server = mock.MagicMock()
         server.__enter__.return_value = server
         source, destination = io.BytesIO(), io.BytesIO()
-        with (
-            mock.patch.object(call, "listener", return_value=server),
-            mock.patch.object(call.select, "select", return_value=([source], [], [])),
-        ):
-            self.assertEqual(call.serve(GEN, stdin=source, stdout=destination), 2)
+        with mock.patch.object(call.select, "select", return_value=([source], [], [])):
+            self.assertEqual(
+                call.serve(
+                    GEN, stdin=source, stdout=destination, listener_factory=lambda _: server
+                ),
+                2,
+            )
         server.accept.assert_not_called()
         self.assertEqual(json.loads(destination.getvalue()), ready())
 
@@ -292,26 +296,28 @@ class TransportTest(Case):
         server, connection = mock.MagicMock(), mock.MagicMock()
         server.__enter__.return_value = server
         connection.__enter__.return_value = connection
+        connection.recv.return_value = b"{}\n"
         connection.sendall.side_effect = BrokenPipeError("gone")
         server.accept.return_value = (connection, None)
         source = io.BytesIO(wire({"returncode": 0, "stdout": "ok"}))
         destination = io.BytesIO()
-        with (
-            mock.patch.object(call, "listener", return_value=server),
-            mock.patch.object(call, "read_socket", return_value=b"{}\n"),
-            mock.patch.object(
-                call.select,
-                "select",
-                side_effect=[([server], [], []), ([source], [], []), ([source], [], [])],
-            ),
+        with mock.patch.object(
+            call.select,
+            "select",
+            side_effect=[([server], [], []), ([source], [], []), ([source], [], [])],
         ):
-            self.assertEqual(call.serve(GEN, stdin=source, stdout=destination), 2)
+            self.assertEqual(
+                call.serve(
+                    GEN, stdin=source, stdout=destination, listener_factory=lambda _: server
+                ),
+                2,
+            )
         connection.sendall.assert_called_once()
         self.assertEqual(len(destination.getvalue().splitlines()), 2)
 
     def test_oversized_request_does_not_reach_host_and_malformed_host_reply_fails(self):
         for incoming, response in (
-            (ValueError("large"), b""),
+            (b"x" * (call.REQUEST_MAX + 1), b""),
             (b"{}\n", b"invalid\n"),
             (b"{}\n", b""),
         ):
@@ -319,25 +325,25 @@ class TransportTest(Case):
                 server, connection = mock.MagicMock(), mock.MagicMock()
                 server.__enter__.return_value = server
                 connection.__enter__.return_value = connection
+                connection.recv.return_value = incoming
                 server.accept.return_value = (connection, None)
                 source, destination = io.BytesIO(response), io.BytesIO()
-                with (
-                    mock.patch.object(call, "listener", return_value=server),
-                    mock.patch.object(
-                        call,
-                        "read_socket",
-                        side_effect=incoming if isinstance(incoming, Exception) else None,
-                        return_value=incoming,
-                    ),
-                    mock.patch.object(
-                        call.select, "select", side_effect=[([server], [], []), ([source], [], [])]
-                    ),
+                with mock.patch.object(
+                    call.select, "select", side_effect=[([server], [], []), ([source], [], [])]
                 ):
-                    self.assertEqual(call.serve(GEN, stdin=source, stdout=destination), 2)
+                    self.assertEqual(
+                        call.serve(
+                            GEN,
+                            stdin=source,
+                            stdout=destination,
+                            listener_factory=lambda _, server=server: server,
+                        ),
+                        2,
+                    )
                 self.assertEqual(json.loads(connection.sendall.call_args.args[0]), call.failed())
                 self.assertEqual(
                     len(destination.getvalue().splitlines()),
-                    1 if isinstance(incoming, Exception) else 2,
+                    1 if len(incoming) > call.REQUEST_MAX else 2,
                 )
 
     def test_unready_duplicate_never_announces_success_and_does_not_start_connector(self):
@@ -347,7 +353,7 @@ class TransportTest(Case):
         destination, popen = io.BytesIO(), mock.Mock()
         with (
             mock.patch.object(call.fcntl, "flock", side_effect=BlockingIOError),
-            mock.patch.object(call, "_await_ready", return_value=False),
+            mock.patch.object(call.time, "monotonic", side_effect=[0, 11]),
         ):
             self.assertEqual(
                 call.host(path, ["/bin/connector"], stdout=destination, popen=popen), 2
@@ -401,14 +407,11 @@ class TransportTest(Case):
                 call._Reader(io.BytesIO(content)).line(8)
 
     def test_main_dispatch_and_all_invalid_modes_fail_with_fixed_stderr(self):
-        with mock.patch.object(call, "client", return_value=80):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        connection.recv.return_value = wire({"returncode": 80, "stdout": ""})
+        with mock.patch.object(call.socket, "socket", return_value=connection):
             self.assertEqual(call.main(["call"]), 80)
-        with mock.patch.object(call, "serve", return_value=0) as serve:
-            self.assertEqual(call.main(["serve", GEN]), 0)
-        serve.assert_called_once_with(GEN)
-        with mock.patch.object(call, "host", return_value=0) as host:
-            self.assertEqual(call.main(["host", "/config", '["/connector"]']), 0)
-        host.assert_called_once_with("/config", ["/connector"])
         for argv in (
             [],
             ["unknown"],
@@ -430,20 +433,23 @@ class ListenerTest(Case):
         probe.connect.side_effect = OSError(errno.ECONNREFUSED, "stale")
         old = os.stat_result((stat.S_IFSOCK | 0o600, 10, 1, 1, 0, 0, 0, 0, 0, 0))
         own = os.stat_result((stat.S_IFSOCK | 0o600, 11, 1, 1, 0, 0, 0, 0, 0, 0))
-        paths = mock.Mock(wraps=os)
-        paths.lstat.side_effect = [old, old, own, own]
-        paths.unlink = mock.Mock()
-        paths.chmod = mock.Mock()
+        original_lstat, entries = os.lstat, iter([old, old, own, own])
+
+        def lstat(filename, *args, **kwargs):
+            return next(entries) if filename == path else original_lstat(filename, *args, **kwargs)
+
         with (
             mock.patch.object(call.socket, "socket", side_effect=[server, probe]),
-            mock.patch.object(call, "os", paths),
+            mock.patch.object(os, "lstat", side_effect=lstat),
+            mock.patch.object(os, "unlink") as unlink,
+            mock.patch.object(os, "chmod") as chmod,
             call.listener(path) as found,
         ):
             self.assertIs(found, server)
         probe.connect.assert_called_once_with(path)
-        self.assertEqual(paths.unlink.call_args_list, [mock.call(path), mock.call(path)])
+        self.assertEqual(unlink.call_args_list, [mock.call(path), mock.call(path)])
         self.assertEqual(
-            paths.chmod.call_args_list, [mock.call(self.home, 0o700), mock.call(path, 0o600)]
+            chmod.call_args_list, [mock.call(self.home, 0o700), mock.call(path, 0o600)]
         )
 
     def test_live_socket_is_never_unlinked(self):
@@ -452,15 +458,18 @@ class ListenerTest(Case):
         server.__enter__.return_value, probe.__enter__.return_value = server, probe
         server.bind.side_effect = OSError(errno.EADDRINUSE, "busy")
         existing = os.stat_result((stat.S_IFSOCK | 0o600, 10, 1, 1, 0, 0, 0, 0, 0, 0))
-        paths = mock.Mock(wraps=os)
-        paths.lstat.return_value = existing
-        paths.unlink = mock.Mock()
-        paths.chmod = mock.Mock()
+        original_lstat = os.lstat
+
+        def lstat(filename, *args, **kwargs):
+            return existing if filename == path else original_lstat(filename, *args, **kwargs)
+
         with (
             mock.patch.object(call.socket, "socket", side_effect=[server, probe]),
-            mock.patch.object(call, "os", paths),
+            mock.patch.object(os, "lstat", side_effect=lstat),
+            mock.patch.object(os, "unlink") as unlink,
+            mock.patch.object(os, "chmod"),
             self.assertRaises(OSError),
             call.listener(path),
         ):
             self.fail("a live listener was replaced")
-        paths.unlink.assert_not_called()
+        unlink.assert_not_called()

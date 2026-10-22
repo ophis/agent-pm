@@ -244,14 +244,17 @@ def listener(path: str):
                         os.unlink(path)
 
 
-def serve(generation: str, *, stdin=None, stdout=None, path: str = SOCKET) -> int:
+def serve(
+    generation: str, *, stdin=None, stdout=None, path: str = SOCKET, listener_factory=None
+) -> int:
     if not _generation(generation):
         return 2
     stdin = sys.stdin.buffer if stdin is None else stdin
     stdout = sys.stdout.buffer if stdout is None else stdout
+    listener_factory = listener if listener_factory is None else listener_factory
     reader = _Reader(stdin)
     try:
-        with listener(path) as server:
+        with listener_factory(path) as server:
             _send(stdout, {"ready": True, "generation": generation})
             while True:
                 readable = select.select([server, stdin], [], [])[0]
