@@ -130,7 +130,6 @@ from agent_pm.utils import (
     CLIENT_ENV,
     EVENTS_ENV,
     SID_ENV,
-    TIER_ENV,
     exhausted,
     nested_start,
     one_line,
@@ -469,7 +468,7 @@ class Board:
             resumed=client_of(self.entries, sid),
         )
 
-    def gated(self, issue, role, client, source, frm=IssueState.READY, *, task=None):
+    def gated(self, issue, role, client, source, frm=IssueState.READY):
         """Whether the usage gate blocks a new run of client; an issue-chosen client's quota
         configuration error bounces the issue from frm instead.
         """
@@ -480,7 +479,6 @@ class Board:
                 ident,
                 key=(self.cfg.delegate_kind, client),
                 reject_config=source == "label",
-                tier=self.cfg.task_tier(task),
             )
         except delegate.ConfigError as error:
             self.say("launch-error", ident, client=client, error=one_line(error))
@@ -597,7 +595,7 @@ class Board:
         if client in clients:
             self.say("claim-skip", ident, reason=f"{client} is full")
             return None
-        if self.gated(issue, role, client, source, task=task):
+        if self.gated(issue, role, client, source):
             return None
         taken = {**issue, "assignee": current.assignee, "project": current.home}
         if self.dry:
@@ -924,7 +922,7 @@ def choose(board, gate, live_ids, full, counts, *, clients, new_sid):
                 continue
             if spec.mode == "new":
                 blocked = board.gated(
-                    issue, role, spec.client, spec.client_source, IssueState.RUNNING, task=spec.task
+                    issue, role, spec.client, spec.client_source, IssueState.RUNNING
                 )
             else:
                 key = (delegate_of(board.entries, sid), spec.client)
@@ -932,9 +930,6 @@ def choose(board, gate, live_ids, full, counts, *, clients, new_sid):
                     role,
                     issue["identifier"],
                     key=key,
-                    tier=board.cfg.task_tier(
-                        started_task(board.cfg.runs_log, issue["identifier"], sid)
-                    ),
                 )
             if not blocked:
                 board.plan(("resume", spec, sid), counts)
@@ -1075,16 +1070,7 @@ def brake(role, cfg):
     client = os.environ.get(CLIENT_ENV) or cfg.roles[role].run.client
     if not cfg.usage_limit.get(client, True):
         return 0
-    raw_tier = os.environ.get(TIER_ENV, "")
-    if raw_tier and raw_tier not in {"1", "2", "3", "4"}:
-        print(f"router.py: ${TIER_ENV}: want a tier from 1 to 4", file=sys.stderr)
-        return 2
-    usage = read_usage(
-        role,
-        cfg,
-        client=client,
-        tier=int(raw_tier) if raw_tier else None,
-    )
+    usage = read_usage(role, cfg, client=client)
     print(summary(usage))
     return 1 if usage is None or exhausted(usage, BRAKE_5H) else 0
 

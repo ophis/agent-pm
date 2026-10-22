@@ -39,7 +39,6 @@ from agent_pm.utils import (
     EVENTS_ENV,
     LEASE_ENV,
     SID_ENV,
-    TIER_ENV,
     Display,
     command_path,
     nested_start,
@@ -294,7 +293,4 @@ class BaseMode(ABC):
         project = spec.access.project if command.project is None else command.project
         info = SessionInfo(spec.sid, cwd, project, command.transcript, command.resume)
         env = child_env(command, cwd, drop, spec.client, inherit=inherit)
-        env.pop(TIER_ENV, None)
-        if spec.tier is not None:
-            env[TIER_ENV] = str(spec.tier)
         return Prepared(spec, info, command.argv, env)

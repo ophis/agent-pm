@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.delegate import Outcome
+from agent_pm.delegate import HarnessDelegate, Outcome
 from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import (
     config,
@@ -40,7 +40,7 @@ from agent_pm.orchestrator.trackers.linear import (
     linear_tracker,
     ops,
 )
-from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
+from agent_pm.session import ConfigError, Session, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
 from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV, OutcomeStatus, Record
 from orchestrator_tests.process_fixtures import TimeoutExpired
@@ -1840,7 +1840,7 @@ class ClientUsage(Base):
                 self.raw = ""
                 self.assertEqual(self.said(), [f"usage-skip TASK-1 client=a {why}"] if why else [])
 
-    def test_one_probe_per_client_and_role_context(self):
+    def test_one_probe_per_client(self):
         self.api.usages = {"a": reading(95), "b": reading(50)}
         with redirect_stderr(io.StringIO()), self.log_dir(again=False):
             gate = self.gate()
@@ -1852,7 +1852,7 @@ class ClientUsage(Base):
                     ("engineer", "TASK-3", "a"),
                 )
             ]
-        self.assertEqual((got, self.api.usage_calls), ([True, False, True], ["a", "b", "a"]))
+        self.assertEqual((got, self.api.usage_calls), ([True, False, True], ["a", "b"]))
 
     def test_usage_cache_does_not_cross_ticks(self):
         self.api.usages = {"a": reading(95)}
@@ -2251,29 +2251,29 @@ class RunBrake(Base):
                     self.assertEqual(self.brake("researcher"), (rc, quota.summary(usage) + "\n"))
                 self.assertEqual(self.api.usage_calls, ["b"])
 
-    def test_brake_probes_the_runs_tier_instead_of_the_role_default(self):
+    def test_brake_reads_only_the_client_through_the_real_harness_delegate(self):
         queried = []
 
-        def make(api, cfg):
-            cls = provider(api, cfg)
+        class UsageSession(Session):
+            @classmethod
+            def configure_from(cls, config, *, hosts=None):
+                pass
 
-            def usage(role, *, overlays=()):
-                tier = 2
-                for overlay in overlays:
-                    tier = overlay.get("roles", {}).get(role, {}).get("tier", tier)
-                queried.append(tier)
-                return reading(None, None) if tier == 1 else None
+            @classmethod
+            def usage(cls, client):
+                queried.append(client)
+                return reading(80)
 
-            cls.usage = staticmethod(usage)
-            return cls
+        class ActualUsage(HarnessDelegate):
+            @classmethod
+            def usage(cls, role, *, overlays=(), session_cls=UsageSession):
+                return super().usage(role, overlays=overlays, session_cls=session_cls)
 
-        with mock.patch("orchestrator_tests.router_fixtures.provider", side_effect=make):
-            with mock.patch.dict(os.environ, {"AGENT_PM_TIER": "1"}):
-                self.assertEqual(self.brake("researcher"), (0, "five_hour=none weekly=none\n"))
-            self.assertEqual(queried, [1])
-            with mock.patch.dict(os.environ, {"AGENT_PM_TIER": "bad"}):
-                self.assertEqual(self.brake("researcher")[0], 2)
-            self.assertEqual(queried, [1])
+        with mock.patch("orchestrator_tests.router_fixtures.provider", return_value=ActualUsage):
+            self.assertEqual(self.brake("researcher"), (1, "five_hour=80% weekly=10%\n"))
+            with mock.patch.dict(os.environ, {"AGENT_PM_CLIENT": "b"}):
+                self.assertEqual(self.brake("researcher")[0], 1)
+        self.assertEqual(queried, ["a", "b"])
 
     def test_no_such_role(self):
         self.assertEqual(self.brake("ghost"), (2, ""))
@@ -2570,7 +2570,7 @@ class ScheduledUsageGates(TickBase):
         self.assertEqual(self.api.usage_calls, ["a", "b"])
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
-    def test_all_blocked_starts_nothing_and_probes_each_role_context_once(self):
+    def test_all_blocked_starts_nothing_and_probes_a_client_once(self):
         self.api.usages = {"a": reading(95)}
         fake = self.fake(
             issue("TASK-1", "In Progress", "researcher", priority=1),
@@ -2587,7 +2587,7 @@ class ScheduledUsageGates(TickBase):
                 self.assertEqual(self.said(), said)
                 self.assertEqual(
                     (self.start.launches, fake.mutations, self.state, self.api.usage_calls),
-                    ([], [], before, ["a", "a"]),
+                    ([], [], before, ["a"]),
                 )
 
     def test_a_live_limit_row_lets_the_other_client_start(self):
