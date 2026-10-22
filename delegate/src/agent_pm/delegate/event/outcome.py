@@ -35,7 +35,7 @@ def parse(data: dict) -> Outcome:
     names = {field.name for field in fields(Outcome)}
     if not isinstance(data, dict) or data.keys() != names:
         raise InvalidOutcome(f"outcome: want the fields {', '.join(sorted(names))}")
-    _conform(data, _schema(), "outcome")
+    _conform(data, _schema(), "")
     return Outcome(**{**data, "status": OutcomeStatus(data["status"])})
 
 
@@ -108,7 +108,7 @@ def validate(data: dict, output: Mapping, workdir: str, hosts: frozenset[str]) -
         [_file(p, workdir) for p in files],
         deliverable,
     )
-    _conform(data, _schema(), "outcome")
+    _conform(data, _schema(), "")
     return outcome
 
 
@@ -122,21 +122,22 @@ def _schema() -> dict:
 
 
 def _conform(value, schema: Mapping, where: str) -> None:
-    """Only the subset of JSON Schema the outcome schema uses."""
+    """Only the outcome schema's JSON Schema subset; `where` is empty at the root."""
     kind = schema.get("type")
     if kind == "object":
         if not isinstance(value, dict):
-            raise InvalidOutcome(f"{where} must be an object")
+            raise InvalidOutcome(f"{where or 'outcome'} must be an object")
         props = schema.get("properties", {})
+        prefix = f"{where}." if where else ""
         if missing := [k for k in schema.get("required", ()) if k not in value]:
-            raise InvalidOutcome(f"{where} lacks {missing[0]!r}")
+            raise InvalidOutcome(f"{where or 'outcome'} lacks {prefix + missing[0]!r}")
         if schema.get("additionalProperties") is False and (
             extra := sorted(set(value) - set(props))
         ):
-            raise InvalidOutcome(f"unknown field {extra[0][:100]!r}")
+            raise InvalidOutcome(f"unknown field {prefix + extra[0][:100]!r}")
         for k, v in value.items():
             if k in props:
-                _conform(v, props[k], k)
+                _conform(v, props[k], prefix + k)
     elif kind == "string":
         if not isinstance(value, str):
             raise InvalidOutcome(f"{where} must be text")
