@@ -94,7 +94,7 @@ ledger_valid() {
     login:2) case $2 in gh | claude | codex) true ;; *) false ;; esac ;;
     launchd:2) case $2 in router | promote) true ;; *) false ;; esac ;;
     keychain:3) [[ $2 =~ $plain ]] && [[ $3 =~ $plain ]] ;;
-    opencode-auth:3) under_home "$2" && [[ $3 =~ $name_pattern ]] ;;
+    opencode-auth:3 | opencode-provider:3) under_home "$2" && [[ $3 =~ $name_pattern ]] ;;
     opencode-config:2) under_home "$2" && case ${2##*/} in opencode.json | opencode.jsonc) true ;; *) false ;; esac ;;
     *) false ;;
   esac
@@ -247,7 +247,7 @@ show() {
   local kind
   printf 'install-cleanup.sh will remove what install.sh added:\n' >&3
   for kind in launchd keychain broker codex-plugin codex-marketplace claude-plugin claude-marketplace \
-    login opencode-auth opencode-config docker-block profile profile-file config cask formula homebrew clt file board-dir dir; do
+    login opencode-auth opencode-provider opencode-config docker-block profile profile-file config cask formula homebrew clt file board-dir dir; do
     of_kind "$kind" | tr '\t' ' ' | sed 's/^/  /' >&3
   done
 }
@@ -373,6 +373,149 @@ logins() {
   done <<<"$(of_kind login)"
 }
 
+# Shared with install-cleanup.sh; edits JSONC values without rewriting unrelated text.
+opencode_config_edit() {
+  python3 -I -c '
+import json, os, re, sys
+from pathlib import Path
+
+strings = r"\"(?:[^\"\\]|\\.)*\""
+comments = re.compile(strings + r"|//[^\r\n]*|/\*[\s\S]*?\*/")
+commas = re.compile(strings + r"|,(?=\s*[}\]])")
+decoder = json.JSONDecoder()
+
+def masked(text):
+    return comments.sub(lambda m: m[0] if m[0].startswith("\"") else re.sub(r"[^\r\n]", " ", m[0]), text)
+
+def notes(text):
+    return [m[0] for m in comments.finditer(text) if not m[0].startswith("\"")]
+
+def parse(text):
+    clean = commas.sub(lambda m: " " if m[0] == "," else m[0], masked(text))
+    if clean.startswith("\ufeff"):
+        clean = " " + clean[1:]
+    data = json.loads(clean or "{}")
+    if not isinstance(data, dict):
+        raise ValueError()
+    return data, clean
+
+def load(path):
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+def write(path, text):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(text)
+
+def space(clean, index):
+    while index < len(clean) and clean[index].isspace():
+        index += 1
+    return index
+
+def members(clean, start):
+    index = space(clean, start + 1)
+    items = []
+    while clean[index] != "}":
+        key_start = index
+        key, index = decoder.raw_decode(clean, index)
+        index = space(clean, index)
+        value_start = space(clean, index + 1)
+        _, end = decoder.raw_decode(clean, value_start)
+        items.append((key, key_start, value_start, end))
+        index = space(clean, end)
+        if clean[index] == ",":
+            index = space(clean, index + 1)
+    return items, index
+
+def edit(text, keys, value, remove=False):
+    _, clean = parse(text)
+    start = space(clean, 0)
+    for key in keys[:-1]:
+        fields, _ = members(clean, start)
+        start = next(field[2] for field in reversed(fields) if field[0] == key)
+    fields, end = members(clean, start)
+    found = next((field for field in reversed(fields) if field[0] == keys[-1]), None)
+    if found:
+        _, key_start, value_start, value_end = found
+        if not remove:
+            carry = "".join("\n" + note + "\n" for note in notes(text[value_start:value_end]))
+            return text[:value_start] + carry + json.dumps(value, indent=2) + text[value_end:]
+        carry = "".join("\n" + note + "\n" for note in notes(text[key_start:value_end]))
+        raw = masked(text)
+        after = space(raw, value_end)
+        if raw[after:after + 1] == ",":
+            return text[:key_start] + carry + text[value_end:after] + text[after + 1:]
+        previous = next((f for f in reversed(fields) if f[3] < key_start), None)
+        if previous:
+            comma = raw.index(",", previous[3], key_start)
+            return text[:comma] + text[comma + 1:key_start] + carry + text[value_end:]
+        return text[:key_start] + carry + text[value_end:]
+    prefix = "," if fields and "," not in masked(text)[fields[-1][3]:end] else ""
+    addition = prefix + "\n  " + json.dumps(keys[-1]) + ": " + json.dumps(value, indent=2) + "\n"
+    return text[:end] + addition + text[end:]
+
+def run():
+    action, raw_path, *args = sys.argv[1:]
+    path = Path(raw_path)
+    if action == "plan":
+        state, name, url, model, window = args
+        state = Path(state)
+        plan = state / "opencode-provider.plan"
+        plan.unlink(missing_ok=True)
+        files = [path / "opencode.json", path / "opencode.jsonc"]
+        loaded = [(file, *parse(load(file))) for file in files]
+        for _, data, _ in loaded:
+            providers = data.get("provider", {})
+            if not isinstance(providers, dict):
+                raise ValueError()
+            if name in providers:
+                return
+        for _, data, _ in loaded:
+            enabled = data.get("enabled_providers")
+            disabled = data.get("disabled_providers", [])
+            if (enabled is not None and (not isinstance(enabled, list) or name not in enabled)
+                    or not isinstance(disabled, list) or name in disabled):
+                raise ValueError()
+        path = next((file for file in reversed(files) if file.exists()), files[-1])
+        text = load(path) or "{}\n"
+        data, _ = parse(text)
+        window = int(window)
+        output = min(32000, window // 4)
+        value = {"npm": "@ai-sdk/openai-compatible", "name": name,
+                 "options": {"baseURL": url}, "models": {model: {"name": model,
+                 "limit": {"context": window, "input": window - min(output + 20000, window // 2), "output": output}}}}
+        new = edit(text, ["provider", name], value) if "provider" in data else edit(text, ["provider"], {name: value})
+        record = {"value": value, "container": "provider" in data, "created": not path.exists()}
+        write(state / ("opencode-provider-" + name + ".json"), json.dumps(record))
+        write(plan, new)
+        print(path)
+    elif action == "remove-provider":
+        state, name = args
+        if not path.exists():
+            return
+        expected = json.loads((Path(state) / ("opencode-provider-" + name + ".json")).read_text())
+        text = load(path)
+        data, _ = parse(text)
+        providers = data.get("provider", {})
+        if not isinstance(providers, dict) or name not in providers or providers[name] != expected["value"]:
+            return
+        keys = ["provider"] if len(providers) == 1 and not expected["container"] else ["provider", name]
+        new = edit(text, keys, None, remove=True)
+        remaining, _ = parse(new)
+        if expected["created"] and not remaining and not notes(new) and not path.is_symlink() and path.parent != Path(state):
+            path.unlink()
+        else:
+            write(path, new)
+    else:
+        raise ValueError()
+
+try:
+    run()
+except (OSError, ValueError, KeyError, TypeError, StopIteration, RecursionError):
+    sys.exit("install: OpenCode config edit failed for " + sys.argv[2] + "; check JSONC, provider filters and installer records")
+' "$@"
+}
+
 opencode_keys() {
   local path name
   step "OpenCode keys"
@@ -460,18 +603,37 @@ config_file() {
   fi
 }
 
-# Puts back the OpenCode config scripts/install.sh's opencode plugin -g changed, from the copy it kept.
+# Removes registered provider values before restoring the pre-plugin config copies.
 opencode_configs() {
-  local path backup
+  local path backup name parent paths file
   step "OpenCode config"
+  paths=$(of_kind '(opencode-provider|opencode-config)' | cut -f2 | sort -u)
+  while IFS=$'\t' read -r _ path name; do
+    [ -n "$name" ] || continue
+    opencode_config_edit remove-provider "$path" "$state_dir" "$name"
+    backup=$state_dir/${path##*/}.orig
+    if [ -s "$backup" ]; then opencode_config_edit remove-provider "$backup" "$state_dir" "$name"; fi
+    drop "opencode-provider"$'\t'"$path"$'\t'"$name"
+  done <<<"$(of_kind opencode-provider)"
   while IFS=$'\t' read -r _ path; do
     [ -n "$path" ] || continue
     backup=$state_dir/${path##*/}.orig
     [ -f "$backup" ] || die "no $backup to restore"
-    cp "$backup" "$path.tmp"
-    mv "$path.tmp" "$path"
+    cp "$backup" "$path"
     drop "opencode-config"$'\t'"$path"
   done <<<"$(of_kind opencode-config)"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    for file in "${path%/*}/opencode.json" "${path%/*}/opencode.jsonc"; do
+      [ -f "$file" ] || continue
+      if of_kind file | grep -qxF "file"$'\t'"$file"; then continue; fi
+      parent=${file%/*}
+      while under_home "$parent"; do
+        drop "dir"$'\t'"$parent"
+        parent=${parent%/*}
+      done
+    done
+  done <<<"$paths"
 }
 
 # Ends what still runs from Docker.app once its cask is gone (its quit misses helpers such as docker-agent): TERM, up to

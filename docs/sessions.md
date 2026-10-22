@@ -93,6 +93,17 @@ Its API key, on the tmux Host, stays OpenCode's: run `opencode auth login` once,
 the broker from one key entry; it imports the local API entry instead of asking for the key twice
 ([Credentials](credentials.md#opencode-provider-api-keys)).
 
+With OpenCode selected, the installer also adds the provider's URL, model and context to the global
+`$XDG_CONFIG_HOME/opencode/opencode.jsonc` (default `~/.config/opencode/opencode.jsonc`), or the existing
+`opencode.json` when there is no JSONC file. Direct `opencode models <provider>` and
+`opencode run --model <provider>/<model>` then use it without an agent-pm session. An existing provider
+in either file is left as-is, including on reruns; the default model is unchanged. Provider filters that
+exclude the selected name must be adjusted by the user before adding it. Config edits preserve symlinks
+and support JSONC comments, trailing commas, UTF-8 BOM and duplicate keys (last value wins). Installer cleanup removes
+the provider it added if its definition is unchanged. Plugin cleanup then restores the configuration
+backup from before the first plugin install, including the user's original providers and settings;
+edits made after that backup revert.
+
 Set each provider's `context` and `[clients.opencode] ollama_context` to the server's real context window (Ollama's `OLLAMA_CONTEXT_LENGTH`): a smaller value compacts early, a larger one lets a request overflow. Both default to 65536.
 
 A crew worker's cwd is always trusted (you pick it), so `agent-pm-crew worker NAME --client opencode --cwd DIR` starts on tmux in any `DIR`; a role run only under `trusted_dirs`; a board run never (its cwd is the workdir's `agent/`): run OpenCode board runs on the Docker Host ([Linear board › OpenCode](board.md#opencode)).

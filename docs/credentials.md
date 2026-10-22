@@ -124,6 +124,9 @@ The broker's temporary Codex login directory is removed on success, child failur
 
 One per `[session.clients.opencode.providers.<name>]` table, such as a LAN Strata server.
 
+The installer also registers the selected provider in local OpenCode's global config so a directly started
+commander can use the key; existing definitions are preserved ([OpenCode sessions](sessions.md#opencode-sessions)).
+
 | Field | Local (`tmux`) | Docker |
 |---|---|---|
 | Purpose | OpenCode's requests to the provider | the same, from a container |

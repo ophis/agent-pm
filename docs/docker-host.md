@@ -91,6 +91,9 @@ existing local entry manually instead of pasting again:
 "$B" login opencode strata --auth-file "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"
 ```
 
+The installer registers the provider for directly started local OpenCode too
+([global provider config](sessions.md#opencode-sessions)); manual broker login only stores its key.
+
 `--auth-file` requires an absolute path and the selected provider's nonempty `type: api` entry in a JSON object
 of at most 1 MiB. It reads no key into argv or env; the keychain password may still be requested. Direct login
 without this option stores only the broker item. Reruns and cleanup ownership: [Credentials](credentials.md#opencode-provider-api-keys).
