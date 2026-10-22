@@ -1789,7 +1789,11 @@ class ClientUsage(Base):
                 self.api.usages, self.api.usage_calls = {"a": usage}, []
                 said = []
                 gate = quota.Gate(
-                    self.runs, NOW, lambda *a, **kw: said.append((a, kw)), cfg=self.cfg(), dry=True
+                    self.runs,
+                    NOW,
+                    lambda *a, said=said, **kw: said.append((a, kw)),
+                    cfg=self.cfg(),
+                    dry=True,
                 )
                 self.assertFalse(
                     gate.blocked("researcher", "TASK-1", key=("harness", "a"), reject_config=True)
