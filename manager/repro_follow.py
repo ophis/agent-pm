@@ -100,6 +100,42 @@ def file_lock(path: str | Path, *, wait: bool = True) -> Iterator[None]:
         os.close(fd)
 
 
+def sync_directory(path: str | Path) -> None:
+    """Persist directory entries after rename or unlink; filesystem errors propagate."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def append_line(
+    path: str | Path,
+    text: str | bytes,
+    *,
+    durable: bool = False,
+    locked: bool = False,
+) -> None:
+    """Refuses anything but a regular file, never waits on a FIFO; `durable` syncs it and its
+    directory; `locked` uses file_lock.
+    """
+    data = memoryview(text.encode(errors="replace") if isinstance(text, str) else text)
+    with file_lock(path) if locked else contextlib.nullcontext():
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK, 0o600)
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise OSError(errno.EINVAL, "not a regular file", str(path))
+            while data:
+                data = data[os.write(fd, data) :]
+            if durable:
+                os.fsync(fd)
+        finally:
+            os.close(fd)
+        if durable:
+            sync_directory(os.path.dirname(os.path.abspath(path)))
+
+
 def printable(text: str) -> str:
     """Without control characters but tabs."""
     return "".join(c for c in text if c.isprintable() or c == "\t")
@@ -254,7 +290,7 @@ def _next_event(args) -> int:
         raise
 
 
-def _child(directory, action, value, pipe=None):
+def _child(directory, action, value, pipe=None, *, locked=False):
     if action == "follow":
         read_fd, write_fd = pipe
         os.close(read_fd)
@@ -276,13 +312,8 @@ def _child(directory, action, value, pipe=None):
         )
         return
     if action == "append":
-        with (
-            file_lock(Path(directory, "events")),
-            open(Path(directory, "events"), "ab") as stream,
-        ):
-            stream.write(value.encode())
-            stream.flush()
-            os.fsync(stream.fileno())
+        # Production SessionStatusLog defaults to unlocked, unsynced append_line.
+        append_line(Path(directory, "events"), value, locked=locked)
         return
     roster = Roster(directory)
     if action == "ack":
@@ -315,7 +346,7 @@ def _diagnostics(directory):
     }
 
 
-def replay(timeout, split_tail):
+def replay(timeout, split_tail, *, locked=False):
     # Both macOS and Linux support fork; no background service or shared user state.
     context = multiprocessing.get_context("fork")
     with tempfile.TemporaryDirectory(prefix="task-854-") as directory:
@@ -329,7 +360,9 @@ def replay(timeout, split_tail):
         identity = (path.stat().st_dev, path.stat().st_ino)
 
         def run(action, value):
-            child = context.Process(target=_child, args=(directory, action, value))
+            child = context.Process(
+                target=_child, args=(directory, action, value), kwargs={"locked": locked}
+            )
             child.start()
             child.join(timeout)
             if child.is_alive():
@@ -393,7 +426,12 @@ def replay(timeout, split_tail):
                 raise RuntimeError("file identity changed")
             print(
                 json.dumps(
-                    {"result": "PASS", "split_tail": split_tail, "final": _diagnostics(directory)}
+                    {
+                        "result": "PASS",
+                        "split_tail": split_tail,
+                        "writer_locked": locked,
+                        "final": _diagnostics(directory),
+                    }
                 ),
                 flush=True,
             )
@@ -415,6 +453,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=10)
+    parser.add_argument(
+        "--locked",
+        action="store_true",
+        help="additional control: lock writers (default matches production: unlocked)",
+    )
     args = parser.parse_args()
     if args.rounds < 1 or not 1 <= args.timeout <= 60:
         parser.error("rounds must be positive; timeout must be between 1 and 60 seconds")
@@ -425,13 +468,14 @@ def main():
                 "release": platform.release(),
                 "python": platform.python_version(),
                 "rounds": args.rounds,
+                "writer_locked": args.locked,
             }
         ),
         flush=True,
     )
     for _ in range(args.rounds):
-        replay(args.timeout, split_tail=False)
-        replay(args.timeout, split_tail=True)
+        replay(args.timeout, split_tail=False, locked=args.locked)
+        replay(args.timeout, split_tail=True, locked=args.locked)
 
 
 if __name__ == "__main__":

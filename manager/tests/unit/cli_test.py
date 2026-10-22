@@ -1319,7 +1319,13 @@ class ReproFollow(Case):
         root = Path(REPO)
         standalone = ast.parse((root / "manager/repro_follow.py").read_text())
         sources = {
-            "utils/src/agent_pm/utils/files.py": ["read_regular", "_read_fd", "file_lock"],
+            "utils/src/agent_pm/utils/files.py": [
+                "read_regular",
+                "_read_fd",
+                "file_lock",
+                "append_line",
+                "sync_directory",
+            ],
             "utils/src/agent_pm/utils/text.py": ["printable"],
             "manager/src/agent_pm/manager/engine/events.py": [
                 "_identity",

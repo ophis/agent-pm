@@ -363,6 +363,12 @@ class Commands(Case):
         self.assertEqual(roster.backlog(), (1, 0, []))
 
     def test_follow_delivers_every_event_across_ack_close_and_issue_processes(self):
+        self._follow_event_sequence(locked=False)
+
+    def test_follow_delivers_every_event_with_locked_writers(self):
+        self._follow_event_sequence(locked=True)
+
+    def _follow_event_sequence(self, *, locked):
         # Keep the real crew/roster CLI; only the downstream board/client is fake.
         starter = Path(self.bin_dir, self.command)
         saved = starter.with_name("fake-ctl")
@@ -387,9 +393,10 @@ class Commands(Case):
                     "-S",
                     "-c",
                     "import sys; from agent_pm.utils import append_line; "
-                    "append_line(sys.argv[1], sys.argv[2], locked=True)",
+                    "append_line(sys.argv[1], sys.argv[2], locked=sys.argv[3] == 'True')",
                     str(path),
                     text,
+                    str(locked),
                 ),
                 env=child_env(),
                 cwd=self.home,
@@ -468,22 +475,28 @@ class Commands(Case):
     def test_standalone_follow_replay(self):
         from manager.tests.case import REPO
 
-        result = subprocess.run(
-            (
-                sys.executable,
-                "-I",
-                "-B",
-                str(Path(REPO, "manager/repro_follow.py")),
-                "--rounds",
-                "1",
-            ),
-            cwd=self.home,
-            env=child_env(),
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        rows = [json.loads(line) for line in result.stdout.splitlines()]
-        self.assertEqual(sum(row.get("result") == "PASS" for row in rows), 2)
+        for flags in ((), ("--locked",)):
+            with self.subTest(flags=flags):
+                result = subprocess.run(
+                    (
+                        sys.executable,
+                        "-I",
+                        "-B",
+                        str(Path(REPO, "manager/repro_follow.py")),
+                        "--rounds",
+                        "1",
+                        *flags,
+                    ),
+                    cwd=self.home,
+                    env=child_env(),
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                rows = [json.loads(line) for line in result.stdout.splitlines()]
+                self.assertEqual(sum(row.get("result") == "PASS" for row in rows), 2)
+                self.assertEqual(
+                    {row["writer_locked"] for row in rows if "result" in row}, {bool(flags)}
+                )
