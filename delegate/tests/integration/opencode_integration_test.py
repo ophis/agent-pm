@@ -4,13 +4,19 @@ tmux Host, headless: the Delegate's part of the opencode client.
 """
 
 import json
+import os
+import shlex
+import shutil
+import sys
 import unittest
+from pathlib import Path
 
 from agent_pm.delegate.engine.runner import FIX
 from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.integration.cli import DONE, UNSAVED, UNSAVED_ERROR, OpenCodeIntegration
 from delegate.tests.replies import block, mark
+from session.tests import live_tmux
 from session.tests.integration.clients.opencode import fake_opencode
 
 NATIVE = fake_opencode.NATIVE
@@ -58,6 +64,51 @@ class OpenCode(OpenCodeIntegration):
         self.assertNotEqual(res.returncode, 0, res.stderr)
         self.assertIn(f"cwd {Layout(self.work).agent} is untrusted", res.stderr)
         self.assertEqual(self.calls(), [])
+
+
+@unittest.skipIf(shutil.which("node") is None, "node is required for the fake OpenCode TUI")
+class OpenCodeTui(OpenCodeIntegration):
+    def setUp(self):
+        super().setUp()
+        self.server = live_tmux.Server(self, self.home)
+        self.server.start("mgr")
+        self.env.update(self.server.env(PATH=self.env["PATH"] + os.pathsep + self.server.path))
+        fake = Path(fake_opencode.__file__).with_name("fake_tui.mjs")
+        shim = Path(self.root, "bin", "opencode")
+        shim.write_text(
+            "#!/bin/sh\n"
+            f'case "$1" in run|--version) exec {shlex.quote(sys.executable)} '
+            f'{shlex.quote(fake_opencode.__file__)} "$@";; esac\n'
+            f'exec {shlex.quote(str(shutil.which("node")))} {shlex.quote(str(fake))} "$@"\n'
+        )
+
+    def scene(self, steps, **scenario):
+        Path(self.scenario).write_text(json.dumps({"turns": [steps], **scenario}))
+
+    def test_tui_records_intermediate_progress_once_and_excludes_child_replies(self):
+        final = mark("step", "finished") + "\n" + block(DONE)
+        res = self.drive(
+            [
+                {"text": mark("start", "working"), "repeat": 2},
+                {"text": mark("child", "excluded"), "child": True},
+                {"busy": True},
+                {"reinit": True},
+                {"text": "intermediate prose"},
+                {"text": final, "repeat": 2, "reads": 8},
+            ],
+            "--mode",
+            "tui",
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(
+            [(r["name"], r["text"]) for r in self.records() if r["kind"] == "progress"],
+            [("start", "working"), ("step", "finished")],
+        )
+        self.assertEqual(res.stderr.count("intermediate prose"), 1)
+        self.assertEqual(res.stderr.count("Progress (step): finished"), 1)
+        self.assertNotIn("excluded", res.stderr)
+        self.assertNotIn("missing progress mark", json.dumps(self.records()))
+        self.assertEqual(self.read(self.out), DONE["deliverable"])
 
 
 if __name__ == "__main__":

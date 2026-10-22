@@ -21,6 +21,7 @@ from agent_pm.session.engine.types import (
     HookKind,
     Launch,
     Permission,
+    Reply,
     Spec,
     TurnEnd,
     TurnFailed,
@@ -304,6 +305,30 @@ class OnHookTest(Base):
 
 
 class EventsTest(Base):
+    def test_completed_replies_are_delivered_and_replayed_before_turn_end(self):
+        records = [
+            ("message.completed", {"session_id": SES, "text": text})
+            for text in ("[agent-pm-progress:start] working", "intermediate", "done")
+        ]
+        records.append(("session.idle", {"session_id": SES, "last_assistant_message": "done"}))
+        expected = [
+            ClientBound(SES),
+            Reply("[agent-pm-progress:start] working"),
+            Reply("intermediate"),
+            Reply("done"),
+            TurnEnd("done"),
+        ]
+        self.assertEqual(self.run_tui().replay(records), expected)
+
+    def test_empty_or_invalid_completed_text_is_ignored(self):
+        run = self.run_tui()
+        run.hook_events(tui.START, {"session_id": SES})
+        for value in (None, 3, "", " \n "):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    run.hook_events("message.completed", {"session_id": SES, "text": value}), []
+                )
+
     def test_the_hook_labels(self):
         self.assertEqual(
             dict(tui.OpenCodeTui.hooks),
