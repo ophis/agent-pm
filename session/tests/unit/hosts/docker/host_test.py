@@ -40,7 +40,14 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.hosts.docker.broker import REFRESH, RELAY, BrokerError, client_keys
+from agent_pm.session.hosts.docker.broker import (
+    BROKER,
+    REFRESH,
+    RELAY,
+    Broker,
+    BrokerError,
+    client_keys,
+)
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.host import (
     KEPT_RETRY,
@@ -55,6 +62,7 @@ from agent_pm.session.viewer import display as displays
 from agent_pm.utils import Record, parse_time
 
 from session.tests.case import REPO, Case
+from session.tests.unit.hosts.docker.support import FakeBroker as BrokerRunner
 from session.tests.unit.hosts.docker.support import data
 from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
@@ -304,6 +312,25 @@ def _free(path):
 
 
 class ConfigTest(Base):
+    def test_provider_usage_rejects_broker_18_before_probing_credentials(self):
+        request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+        locked = data("error-login_required.json")
+        locked["error"].update(
+            command="probe-provider", message="secret-store agent-pm-opencode: keychain locked"
+        )
+        runner = BrokerRunner(
+            (0, '{"protocol_version":"18"}\n', ""),
+            (5, "", json.dumps(locked)),
+        )
+        self.host.broker = Broker(runner)
+        with self.assertRaisesRegex(SessionError, "protocol '18', want '19'") as caught:
+            self.host._provider_usage(request)
+        self.assertIn(
+            "install or upgrade it: see docs/docker-host.md#install", str(caught.exception)
+        )
+        self.assertEqual(runner.calls, [[BROKER, "version"]])
+        self.assertEqual(len(runner.results), 1)
+
     def test_provider_usage_checks_protocol_and_uses_the_broker(self):
         request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
         self.assertTrue(self.host._provider_usage(request))

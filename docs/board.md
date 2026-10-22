@@ -190,7 +190,7 @@ An issue with the Agent group's `OpenCode` label runs OpenCode on the host's Oll
 2. The Docker Host, with the harness on tmux: `[session.hosts] default = "docker"` and `[delegate.delegates] harness_host = "tmux"` ([Docker host › Role runs](docker-host.md#role-runs)). A board run's cwd is untrusted, so on tmux OpenCode refuses to start ([OpenCode sessions](sessions.md#opencode-sessions)). This puts every client's board runs in containers.
 3. An `OpenCode` label in the Agent group, mapped as in [Agent label](#agent-label): `opencode = "<its label id>"` under `[orchestrator.linear.agent_labels]`.
 
-The usage gate probes only the provider of the default `[session.clients.opencode] model`, independently of task tiers: Ollama uses the host's `127.0.0.1:<ollama_port>/api/tags`; configured providers use their `base_url` plus `/models`. A 2xx response permits the run; an unreachable or unauthorized endpoint stays `usage unknown`. Docker probes run in broker protocol 18 with its existing Keychain API key; tmux probes read the selected provider's API entry from OpenCode `auth.json`. Keys stay out of argv, diagnostics and responses; redirects are refused. Task-tier overrides still select each run's model, but do not change the usage probe.
+The usage gate probes only the provider of the default `[session.clients.opencode] model`, independently of task tiers: Ollama uses the host's `127.0.0.1:<ollama_port>/api/tags`; configured providers use their `base_url` plus `/models`. A 2xx response permits the run; an unreachable or unauthorized endpoint stays `usage unknown`. Docker probes run in broker protocol 19 with its existing Keychain API key; tmux probes read the selected provider's API entry from OpenCode `auth.json`. Keys stay out of argv, diagnostics and responses; redirects are refused. Task-tier overrides still select each run's model, but do not change the usage probe.
 
 ## Local board
 
@@ -202,7 +202,7 @@ An issue-selected client whose usage probe requires a missing or non-executable 
 
 ### Mac mini regression checks
 
-Use a separate initialized local test board with OpenCode, Strata and Docker configured. Upgrade the broker to protocol 18 first. These checks require the real mini; CI results do not replace them.
+Use a separate initialized local test board with OpenCode, Strata and Docker configured. Upgrade the broker to protocol 19 first. These checks require the real mini; CI results do not replace them.
 
 | Case | Action | Expected |
 |---|---|---|
