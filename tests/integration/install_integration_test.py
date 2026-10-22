@@ -1576,9 +1576,10 @@ class InstallTest(Case):
                 if not line.startswith("opencode-provider\t")
             )
         )
-        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        result = self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n")
+        self.assert_ok(result)
         self.assertEqual(path.read_text(), original)
-        self.assert_secret_free(KEY, PASSWORD)
+        self.assert_secret_free(KEY, PASSWORD, result=result)
 
     def test_opencode_existing_global_provider_is_not_owned(self):
         path = Path(self.home, ".config/opencode/opencode.jsonc")
@@ -1636,6 +1637,7 @@ class InstallTest(Case):
         self.assert_ok(self.opencode_only(provider_answer="n"))
         self.assertNotIn("provider", json.loads(path.read_text()))
         self.assertNotIn(f"opencode-provider\t{path}\tlan", self.ledger())
+        self.assertFalse(Path(self.agent_pm, "install/opencode-provider.plan").exists())
         self.assert_ok(self.opencode_rerun((WRITE_Q, "y")))
         self.assertIn("lan", json.loads(path.read_text())["provider"])
         self.assertIn(f"opencode-provider\t{path}\tlan", self.ledger())

@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import shutil
 import sys
 from contextlib import redirect_stdout
@@ -90,6 +91,23 @@ class OpenCodeConfigTest(Case):
                 self.assertEqual(self.plan(), "")
                 self.assertEqual({p: p.read_bytes() for p in before}, before)
                 self.assertFalse((self.state / "opencode-provider-lan.json").exists())
+
+    def test_plan_with_private_user_config_is_private_even_with_permissive_umask(self):
+        self.path.write_text('{"provider":{"mine":{"options":{"apiKey":"private-fixture"}}}}')
+        self.path.chmod(0o600)
+        before = self.path.read_bytes()
+        previous = os.umask(0o022)
+        try:
+            self.plan()
+            plan = self.state / "opencode-provider.plan"
+            self.assertEqual(plan.stat().st_mode & 0o777, 0o600)
+            plan.chmod(0o644)
+            self.plan()
+            self.assertEqual(plan.stat().st_mode & 0o777, 0o600)
+        finally:
+            os.umask(previous)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
     def test_bom_and_duplicate_keys_preserve_text_and_use_last_provider(self):
         original = (
@@ -186,7 +204,7 @@ class OpenCodeConfigTest(Case):
         self.add()
         before = self.path.read_bytes()
         with (
-            mock.patch.object(Path, "write_text", side_effect=OSError("private detail")),
+            mock.patch("os.open", side_effect=OSError("private detail")),
             self.assertRaises(SystemExit) as caught,
         ):
             self.remove()

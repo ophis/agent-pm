@@ -1210,7 +1210,7 @@ opencode_plugin() {
 # Shared with install-cleanup.sh; edits JSONC values without rewriting unrelated text.
 opencode_config_edit() {
   python3 -I -c '
-import json, re, sys
+import json, os, re, sys
 from pathlib import Path
 
 strings = r"\"(?:[^\"\\]|\\.)*\""
@@ -1237,7 +1237,9 @@ def load(path):
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 def write(path, text):
-    path.write_text(text, encoding="utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(text)
 
 def space(clean, index):
     while index < len(clean) and clean[index].isspace():
@@ -1362,6 +1364,7 @@ opencode_provider() {
     return
   fi
   if ! consent "$path" "provider: $provider (URL, model, context; credentials stay in auth.json)"; then
+    rm -f "$state_dir/opencode-provider.plan"
     skip declined
     return
   fi
