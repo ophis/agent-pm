@@ -8,12 +8,20 @@
 
 # Repository check discovery, policy, exceptions and test isolation.
 /tests/*.py @ophis
+/tests/session_interface.json @ophis
+/tests/delegate_interface.json @ophis
 /tests/guard_checks/** @ophis
 /tests/guard_data/** @ophis
 /utils/tests/sandbox.py @ophis
 
+# Protocol schemas, fixture expectations and recorded test oracles.
+/protocol/** @ophis
+/delegate/tests/integration/composer/composer_prompts.json @ophis
+/session/tests/unit/clients/claude/fixtures/** @ophis
+
 # Go check dependencies, execution environment and CI build entry.
 /broker/go.mod @ophis
 /broker/go.sum @ophis
+/broker/staticcheck.conf @ophis
 /broker/with-go-state.sh @ophis
 /broker/build.sh @ophis
