@@ -1596,6 +1596,20 @@ class InstallTest(Case):
         self.assertIn("lan", json.loads(path.read_text())["provider"])
         self.assertIn(f"opencode-provider\t{path}\tlan", self.ledger())
 
+    def test_opencode_install_comment_cleanup_install_again(self):
+        self.assert_ok(self.opencode_only())
+        path = Path(self.home, ".config/opencode/opencode.jsonc")
+        note = "// user added after installation\n"
+        path.write_text(path.read_text() + note)
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(path.read_text(), "{}\n" + note)
+        self.assert_ok(self.opencode_only())
+        data = json.loads(path.read_text())
+        self.assertIn("lan", data["provider"])
+        self.assertIn(SPEC, data["plugin"])
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(path.read_text(), "{}\n" + note)
+
     def test_opencode_cleanup_keeps_later_user_config(self):
         self.assert_ok(self.opencode_only())
         path = Path(self.home, ".config/opencode/opencode.jsonc")

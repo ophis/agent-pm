@@ -585,7 +585,7 @@ def run():
             if not original and not extra and added.get("_agent_pm_created") is True:
                 path.unlink()
                 return
-            text = original
+            text = original or ("{}\n" if extra else "")
             if extra:
                 text = text.rstrip() + "\n" + "\n".join(extra) + "\n"
         else:

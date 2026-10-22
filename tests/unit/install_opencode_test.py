@@ -195,6 +195,8 @@ class OpenCodeConfigTest(Case):
                 if original:
                     self.assertIn("// original", self.path.read_text())
                 self.assertNotIn('"installed"', self.path.read_text())
+                if not original:
+                    self.assertEqual(self.plan(), str(self.path))
 
     def test_plugin_rerecord_does_not_claim_later_user_plugin(self):
         self.before.write_text("")
