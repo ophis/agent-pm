@@ -97,7 +97,9 @@ With OpenCode selected, the installer also adds the provider's URL, model and co
 `opencode run --model <provider>/<model>` then use it without an agent-pm session. An existing provider
 in either file is left as-is, including on reruns; the default model is unchanged. Provider filters that
 exclude the selected name must be adjusted by the user before adding it. Installer cleanup removes only
-the provider it added if its definition is unchanged, preserving user providers, comments and other edits.
+the provider it added if its definition is unchanged, preserving user providers, settings and added comments.
+Plugin cleanup may restore the pre-install text and append added comments; formatting changes and removals
+of original comments may revert.
 
 Set each provider's `context` and `[clients.opencode] ollama_context` to the server's real context window (Ollama's `OLLAMA_CONTEXT_LENGTH`): a smaller value compacts early, a larger one lets a request overflow. Both default to 65536.
 

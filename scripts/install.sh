@@ -1166,7 +1166,7 @@ opencode_config_before() {
   local file conf=$1
   for file in "$conf/opencode.json" "$conf/opencode.jsonc"; do
     if { [ -f "$file" ] || [ "${file##*/}" = opencode.jsonc ]; } && ! recorded opencode-config "$file"; then
-      if [ -f "$file" ] && ! recorded file "$file" && ! recorded dir "$conf"; then
+      if [ -f "$file" ] && ! recorded file "$file"; then
         cp "$file" "$state_dir/${file##*/}.orig"
       else
         : >"$state_dir/${file##*/}.orig"
@@ -1243,6 +1243,9 @@ decoder = json.JSONDecoder()
 def masked(text):
     return comments.sub(lambda m: m[0] if m[0].startswith("\"") else re.sub(r"[^\r\n]", " ", m[0]), text)
 
+def notes(text):
+    return [m[0] for m in comments.finditer(text) if not m[0].startswith("\"")]
+
 def pairs(items):
     result = {}
     for key, value in items:
@@ -1302,16 +1305,18 @@ def edit(text, keys, value, remove=False):
     if found:
         _, key_start, value_start, value_end = found
         if not remove:
-            return text[:value_start] + json.dumps(value, indent=2) + text[value_end:]
+            carry = "".join("\n" + note + "\n" for note in notes(text[value_start:value_end]))
+            return text[:value_start] + carry + json.dumps(value, indent=2) + text[value_end:]
+        carry = "".join("\n" + note + "\n" for note in notes(text[key_start:value_end]))
         raw = masked(text)
         after = space(raw, value_end)
         if raw[after:after + 1] == ",":
-            return text[:key_start] + text[value_end:after] + text[after + 1:]
+            return text[:key_start] + carry + text[value_end:after] + text[after + 1:]
         previous = next((f for f in reversed(fields) if f[3] < key_start), None)
         if previous:
             comma = raw.index(",", previous[3], key_start)
-            return text[:comma] + text[comma + 1:key_start] + text[value_end:]
-        return text[:key_start] + text[value_end:]
+            return text[:comma] + text[comma + 1:key_start] + carry + text[value_end:]
+        return text[:key_start] + carry + text[value_end:]
     prefix = "," if fields and "," not in masked(text)[fields[-1][3]:end] else ""
     addition = prefix + "\n  " + json.dumps(keys[-1]) + ": " + json.dumps(value, indent=2) + "\n"
     return text[:end] + addition + text[end:]
@@ -1380,7 +1385,7 @@ def run():
         keys = ["provider"] if len(providers) == 1 and not expected["container"] else ["provider", name]
         new = edit(text, keys, None, remove=True)
         remaining, _ = parse(new)
-        if expected["created"] and not remaining:
+        if expected["created"] and not remaining and not notes(new):
             path.unlink()
         else:
             write(path, new)
@@ -1419,10 +1424,23 @@ def run():
             text = edit(text, ["$schema"], None, remove=True)
         result, _ = parse(text)
         if result == baseline:
-            if not original:
+            extra = notes(text)
+            for note in notes(original):
+                if note in extra:
+                    extra.remove(note)
+            if not original and not extra:
                 path.unlink()
                 return
-            text = original
+            text = original or "{}\n"
+            if extra:
+                text = text.rstrip() + "\n" + "\n".join(extra) + "\n"
+        else:
+            missing = notes(original)
+            for note in notes(text):
+                if note in missing:
+                    missing.remove(note)
+            if missing:
+                text = text.rstrip() + "\n" + "\n".join(missing) + "\n"
         write(path, text)
     else:
         raise ValueError()

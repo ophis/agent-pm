@@ -135,6 +135,16 @@ class OpenCodeConfigTest(Case):
         self.remove()
         self.assertEqual(json.loads(self.path.read_text()), {"provider": {}})
 
+    def test_cleanup_keeps_added_comments_after_removing_new_provider(self):
+        self.add()
+        text = self.path.read_text().replace('"npm":', '/* provider note */ "npm":')
+        self.path.write_text("// user note\n" + text)
+        self.remove()
+        self.assertTrue(self.path.exists())
+        self.assertIn("// user note", self.path.read_text())
+        self.assertIn("/* provider note */", self.path.read_text())
+        self.assertNotIn('"lan"', self.path.read_text())
+
     def test_plugin_cleanup_preserves_user_edits_and_other_plugins(self):
         self.before.write_text('{// original\n"theme":"mine", "plugin":["old"],}\n')
         self.installed.write_text('{"theme":"mine","plugin":["old","installed"]}')
@@ -165,6 +175,26 @@ class OpenCodeConfigTest(Case):
         self.path.write_text(json.dumps({**installed, "theme": "mine"}))
         self.edit("remove-plugin", self.path, self.before, self.installed)
         self.assertEqual(json.loads(self.path.read_text()), {"theme": "mine"})
+
+    def test_plugin_cleanup_keeps_added_comments_with_original_or_new_file(self):
+        for original in ('{// original\n"theme":"mine"}', ""):
+            with self.subTest(original=original):
+                self.before.write_text(original)
+                installed = {"plugin": ["installed"]}
+                if original:
+                    installed["theme"] = "mine"
+                self.installed.write_text(json.dumps(installed))
+                text = json.dumps(installed).replace(
+                    '["installed"]', '[/* plugin note */ "installed"]'
+                )
+                self.path.write_text("// added after installation\n" + text)
+                self.edit("remove-plugin", self.path, self.before, self.installed)
+                self.assertTrue(self.path.exists())
+                self.assertIn("// added after installation", self.path.read_text())
+                self.assertIn("/* plugin note */", self.path.read_text())
+                if original:
+                    self.assertIn("// original", self.path.read_text())
+                self.assertNotIn('"installed"', self.path.read_text())
 
     def test_plugin_rerecord_does_not_claim_later_user_plugin(self):
         self.before.write_text("")

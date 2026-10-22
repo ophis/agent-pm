@@ -1614,7 +1614,7 @@ class InstallTest(Case):
         self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
         self.assertEqual(json.loads(path.read_text()), {"theme": "mine"})
 
-    def test_opencode_provider_without_plugin_has_cleanup_ownership(self):
+    def opencode_without_plugin(self):
         flags = ("--clients", "claude,opencode", "--no-docker", "--opencode-provider", "lan")
         flags += ("--opencode-url", "http://localhost/v1", "--opencode-model", "m")
         flags += ("--opencode-context", "65536", "--opencode-key-stdin")
@@ -1632,8 +1632,32 @@ class InstallTest(Case):
         path = Path(self.home, ".config/opencode/opencode.jsonc")
         self.assertIn("lan", json.loads(path.read_text())["provider"])
         self.assertFalse(any(call.startswith("opencode plugin") for call in self.calls()))
+        return path
+
+    def test_opencode_provider_without_plugin_has_cleanup_ownership(self):
+        path = self.opencode_without_plugin()
         self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
         self.assertFalse(path.exists())
+
+    def test_opencode_plugin_later_install_preserves_user_baseline(self):
+        path = self.opencode_without_plugin()
+        user_spec = "agent-pm@git+https://github.com/ophis/agent-pm.git#user"
+        data = json.loads(path.read_text())
+        data["plugin"] = [user_spec]
+        path.write_text(json.dumps(data))
+        self.assert_ok(self.again(answers=[(WRITE_Q, "y")]))
+        self.assertEqual(json.loads(path.read_text())["plugin"], [SPEC])
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(json.loads(path.read_text()), {"plugin": [user_spec]})
+
+    def test_opencode_cleanup_keeps_added_comment_without_settings(self):
+        self.assert_ok(self.opencode_only())
+        path = Path(self.home, ".config/opencode/opencode.jsonc")
+        path.write_text(path.read_text() + "\n// user note after installation\n")
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertIn("// user note after installation", path.read_text())
+        self.assertNotIn(SPEC, path.read_text())
+        self.assertNotIn('"lan"', path.read_text())
 
     def test_opencode_key_from_stdin(self):
         self.auth_json().parent.mkdir(parents=True)
