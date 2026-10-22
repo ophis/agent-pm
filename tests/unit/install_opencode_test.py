@@ -79,6 +79,20 @@ class OpenCodeConfigTest(Case):
                 self.assertFalse((self.state / "opencode-provider-lan.json").exists())
                 path.unlink()
 
+    def test_existing_provider_with_both_global_files_is_not_owned(self):
+        for selected in ("opencode.json", "opencode.jsonc"):
+            with self.subTest(selected=selected):
+                before = {}
+                for filename in ("opencode.json", "opencode.jsonc"):
+                    name = "lan" if filename == selected else "other"
+                    text = json.dumps({"provider": {name: {"name": "mine"}}})
+                    path = self.conf / filename
+                    path.write_text(text)
+                    before[path] = path.read_bytes()
+                self.assertEqual(self.plan(), "")
+                self.assertEqual({p: p.read_bytes() for p in before}, before)
+                self.assertFalse((self.state / "opencode-provider-lan.json").exists())
+
     def test_invalid_config_fails_without_writing_or_echoing_values(self):
         for text in (
             '{"private": "sensitive",',
@@ -114,7 +128,7 @@ class OpenCodeConfigTest(Case):
     def test_cleanup_removes_only_new_container(self):
         self.add()
         self.remove()
-        self.assertEqual(json.loads(self.path.read_text()), {})
+        self.assertFalse(self.path.exists())
         self.path.write_text('{"provider": {}}')
         self.plan()
         shutil.copyfile(self.state / "opencode-provider.plan", self.path)
@@ -169,7 +183,29 @@ class OpenCodeConfigTest(Case):
         self.edit("remove-plugin", self.path, self.before, self.installed)
         self.assertEqual(self.path.read_text(), original)
 
+    def test_plugin_cleanup_restores_original_order(self):
+        for original in (
+            '{"plugin":["user-plugin","agent-pm@original"]}',
+            '{"plugin":["agent-pm@original","user-plugin"]}',
+        ):
+            with self.subTest(original=original):
+                self.before.write_text(original)
+                self.installed.write_text('{"plugin":["user-plugin","agent-pm@installed"]}')
+                self.path.write_text(self.installed.read_text())
+                self.edit("remove-plugin", self.path, self.before, self.installed)
+                self.assertEqual(self.path.read_text(), original)
+
+    def test_plugin_cleanup_preserves_user_removal_or_replacement(self):
+        self.before.write_text('{"plugin":["agent-pm@original"]}')
+        self.installed.write_text('{"plugin":["agent-pm@installed"]}')
+        for current in ('{"plugin":[]}', '{"plugin":["agent-pm@user"]}', "{}"):
+            with self.subTest(current=current):
+                self.path.write_text(current)
+                self.edit("remove-plugin", self.path, self.before, self.installed)
+                self.assertEqual(self.path.read_text(), current)
+
     def test_failed_atomic_cleanup_keeps_original_and_no_temp_files(self):
+        self.path.write_text('{"theme":"mine"}')
         self.add()
         before = self.path.read_bytes()
         with (

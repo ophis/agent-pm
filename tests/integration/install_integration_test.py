@@ -2,6 +2,7 @@ import json
 import os
 import plistlib
 import re
+import select
 import shutil
 import subprocess
 import sys
@@ -241,6 +242,9 @@ class Tty:
     def read(self):
         while not self.done:
             try:
+                ready, _, _ = select.select([self.master], [], [], 0.1)
+                if not ready:
+                    continue
                 chunk = os.read(self.master, 4096)
             except OSError:
                 time.sleep(0.05)
@@ -272,6 +276,16 @@ class Tty:
 
 
 class InstallTest(Case):
+    def test_terminal_reader_stops_while_slave_still_open(self):
+        terminal = Tty()
+        held = os.dup(terminal.slave)
+        try:
+            terminal.close()
+            self.assertFalse(terminal.reader.is_alive())
+        finally:
+            os.close(held)
+            terminal.reader.join(timeout=5)
+
     def setUp(self):
         self.bin, self.fakes, self.root = (Path(self.home, n) for n in ("bin", "fakes", "root"))
         self.bin.mkdir()
@@ -1579,6 +1593,47 @@ class InstallTest(Case):
             json.loads(path.read_text()),
             {"theme": "mine", "provider": {"user": {"name": "mine"}}, "plugin": ["user-plugin"]},
         )
+        self.assertEqual(sorted(p.name for p in path.parent.iterdir()), ["opencode.jsonc"])
+
+    def test_opencode_cleanup_keeps_second_global_config(self):
+        self.assert_ok(self.opencode_only())
+        path = Path(self.home, ".config/opencode/opencode.json")
+        original = '{"provider":{"user":{"name":"mine"}},"theme":"mine"}'
+        path.write_text(original)
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(path.read_text(), original)
+        self.assertFalse(path.with_suffix(".jsonc").exists())
+
+    def test_opencode_cleanup_keeps_config_inside_agent_root(self):
+        self.env["XDG_CONFIG_HOME"] = str(Path(self.agent_pm, "config"))
+        self.assert_ok(self.opencode_only())
+        path = Path(self.env["XDG_CONFIG_HOME"], "opencode/opencode.jsonc")
+        data = json.loads(path.read_text())
+        data["theme"] = "mine"
+        path.write_text(json.dumps(data))
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(json.loads(path.read_text()), {"theme": "mine"})
+
+    def test_opencode_provider_without_plugin_has_cleanup_ownership(self):
+        flags = ("--clients", "claude,opencode", "--no-docker", "--opencode-provider", "lan")
+        flags += ("--opencode-url", "http://localhost/v1", "--opencode-model", "m")
+        flags += ("--opencode-context", "65536", "--opencode-key-stdin")
+        result = self.run_install(
+            *flags,
+            stdin=KEY + "\n",
+            answers=[
+                (SUDO_Q, PASSWORD),
+                *[(WRITE_Q, "y")] * 2,
+                (WRITE_Q, "n"),
+                *[(WRITE_Q, "y")] * 2,
+            ],
+        )
+        self.assert_ok(result)
+        path = Path(self.home, ".config/opencode/opencode.jsonc")
+        self.assertIn("lan", json.loads(path.read_text())["provider"])
+        self.assertFalse(any(call.startswith("opencode plugin") for call in self.calls()))
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertFalse(path.exists())
 
     def test_opencode_key_from_stdin(self):
         self.auth_json().parent.mkdir(parents=True)
@@ -1855,7 +1910,7 @@ class InstallTest(Case):
                 "--opencode-url",
                 url,
                 stdin=KEY + "\n",
-                answers=[(SUDO_Q, PASSWORD), *([(WRITE_Q, "y")] * (4 if warned else 1))],
+                answers=[(SUDO_Q, PASSWORD), *([(WRITE_Q, "y")] * (5 if warned else 1))],
             )
             self.assert_ok(result)
             self.assertEqual("sends the API key in plaintext" in result.stderr, warned, url)

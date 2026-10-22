@@ -1215,12 +1215,10 @@ opencode_plugin() {
     say "    $spec: $ref is at ${commit:0:12}, OpenCode's copy at ${had:0:12}: downloading it again"
   fi
   opencode_config_before "$conf"
-  if ! recorded dir "$conf"; then
-    for name in package.json package-lock.json .gitignore; do
-      [ -e "$conf/$name" ] || ledger_add file "$conf/$name"
-    done
-    record_dir "$conf/node_modules"
-  fi
+  for name in package.json package-lock.json .gitignore; do
+    [ -e "$conf/$name" ] || ledger_add file "$conf/$name"
+  done
+  record_dir "$conf/node_modules"
   record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/packages"
   record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/packages/${spec%%//*}"
   rm -rf -- "$dir"
@@ -1349,7 +1347,7 @@ def run():
                  "options": {"baseURL": url}, "models": {model: {"name": model,
                  "limit": {"context": window, "input": window - min(output + 20000, window // 2), "output": output}}}}
         new = edit(text, ["provider", name], value) if "provider" in data else edit(text, ["provider"], {name: value})
-        record = {"value": value, "container": "provider" in data}
+        record = {"value": value, "container": "provider" in data, "created": not path.exists()}
         write(state / ("opencode-provider-" + name + ".json"), json.dumps(record))
         write(plan, new)
         print(path)
@@ -1380,7 +1378,12 @@ def run():
         if not isinstance(providers, dict) or name not in providers or providers[name] != expected["value"]:
             return
         keys = ["provider"] if len(providers) == 1 and not expected["container"] else ["provider", name]
-        write(path, edit(text, keys, None, remove=True))
+        new = edit(text, keys, None, remove=True)
+        remaining, _ = parse(new)
+        if expected["created"] and not remaining:
+            path.unlink()
+        else:
+            write(path, new)
     elif action == "remove-plugin":
         before, installed = map(Path, args)
         if not path.exists():
@@ -1396,8 +1399,20 @@ def run():
         if not all(isinstance(p, list) for p in (old_plugins, installed_plugins, plugins)):
             raise ValueError()
         owned = [p for p in installed_plugins if p not in old_plugins]
-        removed = [p for p in old_plugins if p not in installed_plugins and p not in plugins]
-        kept = removed + [p for p in plugins if p not in owned]
+        present_owned = [p for p in plugins if p in owned]
+        kept = [p for p in plugins if p not in owned]
+        for index, old in enumerate(old_plugins):
+            if old in kept or old in installed_plugins or not isinstance(old, str):
+                continue
+            replacement = next((p for p in present_owned if isinstance(p, str)
+                                and p.split("@", 1)[0] == old.split("@", 1)[0]), None)
+            if replacement is None:
+                continue
+            following = next((p for p in old_plugins[index + 1:] if p in kept), None)
+            previous = next((p for p in reversed(old_plugins[:index]) if p in kept), None)
+            position = (kept.index(following) if following is not None else kept.index(previous) + 1
+                        if previous is not None else min(plugins.index(replacement), len(kept)))
+            kept.insert(position, old)
         if kept != plugins:
             text = edit(text, ["plugin"], kept, remove=not kept and "plugin" not in baseline)
         if "$schema" not in baseline and "$schema" in added and current.get("$schema") == added["$schema"]:
@@ -1437,6 +1452,7 @@ opencode_provider() {
     return
   fi
   ledger_add opencode-provider "$path" "$provider"
+  mkdir -p "$conf"
   mv "$state_dir/opencode-provider.plan" "$path"
 }
 

@@ -491,7 +491,7 @@ def run():
                  "options": {"baseURL": url}, "models": {model: {"name": model,
                  "limit": {"context": window, "input": window - min(output + 20000, window // 2), "output": output}}}}
         new = edit(text, ["provider", name], value) if "provider" in data else edit(text, ["provider"], {name: value})
-        record = {"value": value, "container": "provider" in data}
+        record = {"value": value, "container": "provider" in data, "created": not path.exists()}
         write(state / ("opencode-provider-" + name + ".json"), json.dumps(record))
         write(plan, new)
         print(path)
@@ -522,7 +522,12 @@ def run():
         if not isinstance(providers, dict) or name not in providers or providers[name] != expected["value"]:
             return
         keys = ["provider"] if len(providers) == 1 and not expected["container"] else ["provider", name]
-        write(path, edit(text, keys, None, remove=True))
+        new = edit(text, keys, None, remove=True)
+        remaining, _ = parse(new)
+        if expected["created"] and not remaining:
+            path.unlink()
+        else:
+            write(path, new)
     elif action == "remove-plugin":
         before, installed = map(Path, args)
         if not path.exists():
@@ -538,8 +543,20 @@ def run():
         if not all(isinstance(p, list) for p in (old_plugins, installed_plugins, plugins)):
             raise ValueError()
         owned = [p for p in installed_plugins if p not in old_plugins]
-        removed = [p for p in old_plugins if p not in installed_plugins and p not in plugins]
-        kept = removed + [p for p in plugins if p not in owned]
+        present_owned = [p for p in plugins if p in owned]
+        kept = [p for p in plugins if p not in owned]
+        for index, old in enumerate(old_plugins):
+            if old in kept or old in installed_plugins or not isinstance(old, str):
+                continue
+            replacement = next((p for p in present_owned if isinstance(p, str)
+                                and p.split("@", 1)[0] == old.split("@", 1)[0]), None)
+            if replacement is None:
+                continue
+            following = next((p for p in old_plugins[index + 1:] if p in kept), None)
+            previous = next((p for p in reversed(old_plugins[:index]) if p in kept), None)
+            position = (kept.index(following) if following is not None else kept.index(previous) + 1
+                        if previous is not None else min(plugins.index(replacement), len(kept)))
+            kept.insert(position, old)
         if kept != plugins:
             text = edit(text, ["plugin"], kept, remove=not kept and "plugin" not in baseline)
         if "$schema" not in baseline and "$schema" in added and current.get("$schema") == added["$schema"]:
@@ -650,8 +667,9 @@ config_file() {
 
 # Removes registered provider values and the plugin delta; leaves unrelated user edits in place.
 opencode_configs() {
-  local path backup name parent
+  local path backup name parent paths file
   step "OpenCode config"
+  paths=$(of_kind '(opencode-provider|opencode-config)' | cut -f2 | sort -u)
   while IFS=$'\t' read -r _ path name; do
     [ -n "$name" ] || continue
     opencode_config_edit remove-provider "$path" "$state_dir" "$name"
@@ -662,16 +680,20 @@ opencode_configs() {
     backup=$state_dir/${path##*/}.orig
     [ -f "$backup" ] || die "no $backup to restore"
     opencode_config_edit remove-plugin "$path" "$backup" "$state_dir/${path##*/}.installed"
-    if [ -f "$path" ]; then
-      drop "file"$'\t'"$path"
-      parent=${path%/*}
+    drop "opencode-config"$'\t'"$path"
+  done <<<"$(of_kind opencode-config)"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    for file in "${path%/*}/opencode.json" "${path%/*}/opencode.jsonc"; do
+      [ -f "$file" ] || continue
+      drop "file"$'\t'"$file"
+      parent=${file%/*}
       while under_home "$parent"; do
         drop "dir"$'\t'"$parent"
         parent=${parent%/*}
       done
-    fi
-    drop "opencode-config"$'\t'"$path"
-  done <<<"$(of_kind opencode-config)"
+    done
+  done <<<"$paths"
 }
 
 # Ends what still runs from Docker.app once its cask is gone (its quit misses helpers such as docker-agent): TERM, up to
@@ -809,7 +831,7 @@ main() {
     die "records no step removed are left in $ledger"
   fi
   rm -rf "$state_dir"
-  if [ -n "$agent_root" ] && [ ! -e "$HOME/.agent-pm/board" ]; then rm -rf "$HOME/.agent-pm"; fi
+  if [ -n "$agent_root" ]; then rmdir "$HOME/.agent-pm" 2>/dev/null || true; fi
   current=
   say "Removed what install.sh added."
 }
