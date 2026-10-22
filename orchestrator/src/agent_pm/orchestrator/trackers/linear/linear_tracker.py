@@ -163,7 +163,7 @@ GROUP_BY_TYPE = {
 }
 Q_READ = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
   project { id }
-  comments(first: 250) { nodes { body createdAt user { email name isMe } } }
+  comments(first: 250) { nodes { id body createdAt user { email name isMe } } }
   attachments(first: 50) { nodes { url } }
   labels(first: 50) { nodes { id } }
   relations(first: 50) { nodes { relatedIssue { identifier title state { name } } } }
@@ -481,6 +481,12 @@ class LinearTracker(Tracker):
             raise IssueError(f"{ident}: issue not found")
         if node["identifier"] != ident:
             raise IssueError(f"Linear returned {str(node['identifier'])[:40]!r} for {ident}")
+        run_notes = {
+            client_id(c["body"].split()[1], step): c["body"].split()[1]
+            for c in node["comments"]["nodes"]
+            if is_comment(c)
+            for step in ("start", "comment")
+        }
         notes = sorted(
             (
                 Note(
@@ -489,6 +495,7 @@ class LinearTracker(Tracker):
                     c["user"].get("email"),
                     c["user"].get("name"),
                     _origin(c["user"], selves),
+                    run=run_notes.get(c.get("id")),
                 )
                 for c in node["comments"]["nodes"]
                 if c["user"] and not is_comment(c)

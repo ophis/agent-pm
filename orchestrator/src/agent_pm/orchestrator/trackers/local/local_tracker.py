@@ -174,7 +174,9 @@ class LocalTracker(Tracker):
         found = self._need(ident)
         files = self.files()
         notes = (
-            Note(n.body, stamp_time(n.at), None, n.source.value, ORIGINS[n.source])
+            Note(
+                n.body, stamp_time(n.at), None, n.source.value, ORIGINS[n.source], run=_note_run(n)
+            )
             for n in found.comments
             if not _is_run(n)
         )
@@ -564,6 +566,15 @@ def archived_from(issue):
     if not name or name.startswith(".") or name == ARCHIVE or "/" in name or "\0" in name:
         return UNASSIGNED
     return name
+
+
+def _note_run(note):
+    sid, _, step = unquote(note.key or "").partition(":")
+    return (
+        sid
+        if note.source == Source.SELF and UUID_RE.fullmatch(sid) and step in ("start", "comment")
+        else None
+    )
 
 
 def _prefix(files):

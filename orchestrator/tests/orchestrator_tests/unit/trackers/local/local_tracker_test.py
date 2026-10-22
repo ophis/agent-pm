@@ -567,6 +567,32 @@ WROTE = "- 2026-10-20 09:30:00.000 {} self\n"
 
 
 class ResumeInputs(Board):
+    def test_existing_local_refs_pair_delivery_to_its_own_start_after_cleanup(self):
+        first = "0123abcd-0000-4000-8000-0123456789ab"
+        second = "0123abcd-0000-4000-8000-0123456789ac"
+        self.write(
+            "engineer/review",
+            "LOC-1",
+            comments=(
+                f"#### self · 2026-10-22 08:44:16.000 <!-- id=c1 key={first}:start -->\nBuild started: first\n\n"
+                "#### other · 2026-10-22 08:44:37.000\nAdd another line.\n\n"
+                f"#### self · 2026-10-22 08:44:37.900 <!-- id=c2 key={second}:start -->\nBuild started: interrupted\n\n"
+                f"#### self · 2026-10-22 09:14:38.000 <!-- id=c3 key={first}:comment -->\nBuild ready: delivered late\n"
+            ),
+        )
+        issue = self.tracker.issue("LOC-1")
+        self.assertEqual([n.run for n in issue.notes], [first, None, second, first])
+        text = inputs.render(
+            issue,
+            "engineer",
+            inputs.Sources((), None),
+            target=Target("o", "r", "b"),
+            docs=Docs("o/docs", "main", {"pm": "Product Design/"}),
+        )
+        requirements, earlier = text.split("## Earlier comments", 1)
+        self.assertIn("Add another line.", requirements)
+        self.assertNotIn("Add another line.", earlier)
+
     def test_local_interrupted_timeline_renders_the_pre_start_comment_as_a_requirement(self):
         self.write(
             "engineer/running",

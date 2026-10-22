@@ -10,7 +10,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Linked,
     Note,
 )
-from agent_pm.orchestrator.trackers.linear import linear_tracker
+from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import PACKAGED_FLOW, workflow_file
@@ -63,9 +63,15 @@ def read(**over):
 
 
 def note(
-    body, at="2026-09-02T00:00:00.000Z", email="agent@example.com", name="Agent", origin="self"
+    body,
+    at="2026-09-02T00:00:00.000Z",
+    email="agent@example.com",
+    name="Agent",
+    origin="self",
+    *,
+    run=SID,
 ):
-    return Note(body, at, email, name, origin)
+    return Note(body, at, email, name, origin, run=run)
 
 
 def issue(description="", created_at="2026-09-01T00:00:00.000Z", notes=()):
@@ -93,6 +99,31 @@ HANDOFF = (
 
 
 class ReadIssue(Case):
+    def test_existing_comment_ids_bind_build_notes_to_their_own_run(self):
+        self.assertIn("nodes { id body createdAt", linear_tracker.Q_READ)
+        start = {
+            **comment("Build started: go", "2026-09-02T00:00:00Z", email="agent@example.com"),
+            "id": ops.client_id(SID, "start"),
+        }
+        done = {
+            **comment("Build ready: done", "2026-09-02T00:01:00Z", email="agent@example.com"),
+            "id": ops.client_id(SID, "comment"),
+        }
+        session = comment(
+            f"Run {SID} · done · #2 · 2026-09-02T00:00:00Z", "2026-09-02T00:00:00Z", me=True
+        )
+        for me in (False, True):
+            with self.subTest(harness=me):
+                session["user"]["isMe"] = me
+                got = read(comments={"nodes": [done, start, session]})
+                self.assertEqual(
+                    [(n.body, n.run) for n in got.notes if n.body.startswith("Build")],
+                    [(start["body"], SID if me else None), (done["body"], SID if me else None)],
+                )
+                self.assertEqual(
+                    issues.build_cutoff(got), start["createdAt"] if me else got.created_at
+                )
+
     def test_maps_fields_and_queries_by_identifier(self):
         gql = FakeGql(
             payload(
@@ -279,7 +310,7 @@ class BuildCutoff(Case):
                     self.cutoff(note("Build started", self.START), note(body, self.DONE)),
                     self.START,
                 )
-        for body in ("Build failed: no", "Question: which?", "Build readyness", "build ready"):
+        for body in ("Build failed: no", "Question: which?", "Build readying", "build ready"):
             with self.subTest(body=body):
                 self.assertEqual(
                     self.cutoff(note("Build started", self.START), note(body, self.DONE)),
@@ -324,6 +355,42 @@ class BuildCutoff(Case):
             self.cutoff(note("Build ready", self.START), note("Build started", self.DONE)),
             self.CREATED,
         )
+
+    def test_late_delivery_does_not_consume_another_interrupted_runs_comments(self):
+        self.assertEqual(
+            self.cutoff(
+                note("Build started: first", self.START),
+                note("Build started: interrupted", self.DONE, run="another-run"),
+                note("Build ready: first delivered late", self.NEXT),
+            ),
+            self.START,
+        )
+
+    def test_unassociated_comments_cannot_consume_requirements(self):
+        self.assertEqual(
+            self.cutoff(
+                note("Build started", self.START, run=None),
+                note("Build ready", self.DONE, run=None),
+            ),
+            self.CREATED,
+        )
+
+    def test_punctuation_leads_match_the_written_colon_space_or_bare_form(self):
+        config.TASKS.load(
+            workflow_file(
+                PACKAGED_FLOW.replace('start = "Build started:"', 'start = "Coding!:"').replace(
+                    'done = "Build ready:"', 'done = "Delivered!:"'
+                )
+            )
+        )
+        for suffix in (": first", " first", ""):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(
+                    self.cutoff(
+                        note("Coding!" + suffix, self.START), note("Delivered!" + suffix, self.DONE)
+                    ),
+                    self.START,
+                )
 
     def test_leads_come_from_the_loaded_workflow(self):
         config.TASKS.load(

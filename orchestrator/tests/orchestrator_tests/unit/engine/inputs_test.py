@@ -60,7 +60,13 @@ NOT_FOUND = ok(code=1, stderr="gh: Not Found (HTTP 404)")
 
 def note(body, at, who=AGENT):
     """AGENT's: self; anyone else's: other, the user's side."""
-    return Note(body, at, *who, "self" if who is AGENT else "other")
+    return Note(
+        body,
+        at,
+        *who,
+        "self" if who is AGENT else "other",
+        run="build-session" if who is AGENT else None,
+    )
 
 
 def issue(

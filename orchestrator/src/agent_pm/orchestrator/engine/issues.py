@@ -19,22 +19,24 @@ def brief(issue) -> str:
 @cache
 def _lead_re(lead):
     lead = lead.removesuffix(":")
-    return re.compile(rf"{re.escape(lead)}\b" if lead else r"(?!)")
+    return re.compile(rf"{re.escape(lead)}(?=\W|$)" if lead else r"(?!)")
 
 
 def build_cutoff(issue) -> str:
     """A start consumes comments only after a successful build delivery on the tracker."""
     cutoff = issue.created_at
-    notes = sorted((n for n in issue.notes if not is_user(n)), key=lambda n: parse_time(n.at))
+    notes = sorted(
+        (n for n in issue.notes if not is_user(n) and n.run), key=lambda n: parse_time(n.at)
+    )
     for task in workflow.DEFAULT.values():
         if task.input != "build":
             continue
         start, done = _lead_re(task.start), _lead_re(task.done)
-        started = None
+        started = {}
         for note in notes:
             body = note.body.strip()
             if start.match(body):
-                started = note.at
-            elif done.match(body) and started is not None:
-                cutoff = max((cutoff, started), key=parse_time)
+                started[note.run] = note.at
+            elif done.match(body) and note.run in started:
+                cutoff = max((cutoff, started[note.run]), key=parse_time)
     return cutoff

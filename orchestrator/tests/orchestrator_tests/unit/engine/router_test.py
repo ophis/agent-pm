@@ -3233,10 +3233,11 @@ class RunLaunching(OuterBase):
                 )
             )
         comments = [old, later]
-        for body, _issue in self.gql.comments.values():
-            if body.startswith(("Build started", "Build ready")):
+        for cid, (body, _issue) in self.gql.comments.items():
+            if body.startswith(("Build started", "Build ready", "Run ")):
                 comments.append(
                     {
+                        "id": cid,
                         "body": body,
                         "createdAt": "2026-10-22T08:44:37.900Z"
                         if body.startswith("Build started")
@@ -3244,11 +3245,11 @@ class RunLaunching(OuterBase):
                         "user": {
                             "email": "engineer@agents.test",
                             "name": "Engineer",
-                            "isMe": False,
+                            "isMe": body.startswith("Run "),
                         },
                     }
                 )
-        self.assertEqual(len(comments), 4)
+        self.assertEqual(len(comments), 5)
         self.gql.issue = node(comments=comments)
         for cleanup in ("none", "ledger", "workdir"):
             with self.subTest(cleanup=cleanup):
@@ -3262,6 +3263,29 @@ class RunLaunching(OuterBase):
                 self.assertNotIn("Delivered line.", requirements)
                 self.assertIn("Delivered line.", earlier)
                 self.assertNotIn("Add another line.", earlier)
+
+        other_sid = str(uuid.uuid4())
+        delayed = [
+            {**n, "createdAt": "2026-10-22T10:00:00Z"} if n["body"].startswith("Build ready") else n
+            for n in comments
+        ]
+        for step, body in (
+            ("start", "Build started: interrupted"),
+            ("session", f"Run {other_sid} · interrupted · #2 · 2026-10-22T09:00:00Z"),
+        ):
+            delayed.append(
+                {
+                    "id": ops.client_id(other_sid, step),
+                    "body": body,
+                    "createdAt": "2026-10-22T09:00:00Z",
+                    "user": {"email": "engineer@agents.test", "isMe": step == "session"},
+                }
+            )
+        self.gql.issue = node(comments=delayed)
+        self.assertEqual(self.outer(sid=str(uuid.uuid4())), 0)
+        requirements, earlier = self.input().split("## Earlier comments", 1)
+        self.assertIn("Add another line.", requirements)
+        self.assertNotIn("Add another line.", earlier)
 
     def test_target_gets_the_runs_delegate_class_and_workdir(self):
         cfg = self.cfg()

@@ -212,6 +212,7 @@ class Note:
     account: str | None
     name: str | None
     origin: Origin
+    run: str | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)
