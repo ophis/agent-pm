@@ -369,9 +369,7 @@ class OpenCodeCommon:
         return exe
 
     def inline(self, spec: Spec, context: ClientContext, plugin: str | None = None) -> dict:
-        """The launch's OpenCode config: only ollama on the context's host address and the
-        configured providers enabled, no auto-update, shell calls asking but pre-approved commands,
-        Access dirs and reads outside the cwd, edit_rules. A provider's API key: a container's
+        """The launch's providers, permissions and plugin. A provider's API key: the container's
         broker-written file, else OpenCode's auth.json.
         """
         access = spec.access
@@ -386,6 +384,12 @@ class OpenCodeCommon:
                 pattern: "allow" for d in outside for pattern in (d, f"{d}/*")
             }
         permission["edit"] = edit_rules(os.path.realpath(access.cwd), dirs, reads)
+        if context.permission is Permission.YOLO:
+            # --auto replies in the TUI after permission.asked; approve at the backend so the
+            # plugin never reports those transient asks as blocked. Keep agent and edit denies.
+            permission.update(
+                dict.fromkeys(("bash", "read", "external_directory", "doom_loop"), "allow")
+            )
         ollama = f"http://{context.host_address}:{self.port}/v1"
         providers = {
             OLLAMA: self._provider("Ollama", ollama, OLLAMA, (), self.ollama_context),

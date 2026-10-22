@@ -112,7 +112,7 @@ max = "max"
 #                    OpenCode config (OPENCODE_CONFIG_CONTENT) holds the ollama provider at
 #                    http://<the Host's address>:<ollama_port>/v1 and the configured providers, every other provider
 #                    off (enabled_providers: OpenCode's built-in ones, OpenCode Zen's included), autoupdate off and
-#                    permission.bash = "ask" (but a run's pre-approved commands): headless refuses the shell call, the
+#                    auto's permission.bash = "ask" (but a run's pre-approved commands): headless refuses the shell call, the
 #                    TUI asks and the session is blocked. OpenCode runs any cwd's .opencode plugins and opencode.json
 #                    (it has no project trust), so outside an isolated Host a launch, a resume's included, whose cwd is
 #                    not trusted (Access.project) is refused before it starts (docs/sessions.md › OpenCode sessions)
@@ -127,7 +127,8 @@ max = "max"
 #                    and without it such a run is refused
 #   env              variables added to every launch; never one that overrides the launch's OpenCode config
 #                    (OPENCODE_PERMISSION, OPENCODE_CONFIG, OPENCODE_CONFIG_DIR, OPENCODE_CONFIG_CONTENT); empty → none
-# [clients.opencode.modes]    auto: none (bash asks); yolo: --auto, every permission granted
+# [clients.opencode.modes]    auto: none (bash asks); yolo: --auto plus backend allow for bash/read/external_directory/
+#                            doom_loop, avoiding transient permission.asked events; edit denies stay, questions still ask
 # [clients.opencode.tiers]    tier "1".."4" → its --model: ollama/<model> or <name>/<model> of a providers table, which
 #                             lists the model; any other provider is refused
 # [clients.opencode.providers.<name>]  an OpenAI-compatible provider (e.g. a LAN server; docs/sessions.md › OpenCode

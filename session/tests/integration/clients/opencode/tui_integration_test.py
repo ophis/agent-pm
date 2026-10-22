@@ -112,15 +112,14 @@ class TuiSessions(Case):
         }
         env = self.server.env(XDG_DATA_HOME=str(self.root / "data"), **git)
         self.enterContext(mock.patch.dict(os.environ, env, clear=True))
-        self.session_cls = configured(
-            {
-                "opencode": {
-                    "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
-                    "tiers": {"1": "ollama/qwen3.6:35b-mlx"},
-                    "env": {"FAKE_LOG": str(self.log), "FAKE_SCENARIO": str(self.scenario)},
-                }
+        self.clients = {
+            "opencode": {
+                "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
+                "tiers": {"1": "ollama/qwen3.6:35b-mlx"},
+                "env": {"FAKE_LOG": str(self.log), "FAKE_SCENARIO": str(self.scenario)},
             }
-        )
+        }
+        self.session_cls = configured(self.clients)
         self.common = self.session_cls._config().registry.client("opencode").common
         self.spec = Spec(
             workdir=str(self.work),
@@ -228,6 +227,45 @@ class TuiSessions(Case):
         self.assertEqual(found[0], Activity(""))
         self.assertEqual(found[-1], TurnEnd("cleaned"))
         self.assertEqual(self.words(2)[-1], "w1 done")
+
+    def test_yolo_tools_never_report_blocked(self):
+        self.session_cls = configured(self.clients, {"isolated": True})
+        self.scene(
+            [
+                [
+                    {"tool": "glob", "permission": "external_directory", "pattern": "/opt/team"},
+                    {"tool": "read", "permission": "read", "pattern": "sample.env"},
+                    {"bash": "git status"},
+                    {"bash": "git status", "child": True},
+                    {"tool": "bash", "permission": "doom_loop", "pattern": "git status"},
+                    {"text": "finished"},
+                ]
+            ]
+        )
+        _, stream = self.start()
+        found = stream.until(TurnEnd)
+        self.assertFalse(any(isinstance(event, Blocked) for event in found), found)
+        self.assertEqual(
+            [event.detail for event in found if isinstance(event, Activity) and event.detail],
+            ["glob", "glob", "read", "read", "bash", "bash", "bash", "bash"],
+        )
+        self.assertEqual(found[-1], TurnEnd("finished"))
+        self.assertEqual(self.words(1), ["w1 done"])
+        stream.quiet()
+        self.assertEqual(self.words(1), ["w1 done"])
+
+    def test_yolo_questions_still_block_in_root_and_child_sessions(self):
+        self.session_cls = configured(self.clients, {"isolated": True})
+        self.scene(
+            [[{"question": "Database"}, {"question": "Region", "child": True}, {"text": "picked"}]]
+        )
+        handle, stream = self.start()
+        for title in ("Database", "Region"):
+            self.assertEqual(stream.until(Blocked)[-1], Blocked(f"question: {title}"))
+            self.assertEqual(self.words(1)[-1], "w1 blocked")
+            handle.send("answer")
+        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("picked"))
+        self.assertEqual(self.words(3), ["w1 blocked", "w1 blocked", "w1 done"])
 
     def test_a_child_sessions_ask_blocks(self):
         self.scene([[{"bash": "make", "child": True}, {"text": "built"}]])
