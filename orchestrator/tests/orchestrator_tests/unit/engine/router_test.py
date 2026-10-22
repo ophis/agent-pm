@@ -14,7 +14,6 @@ import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
@@ -43,8 +42,6 @@ from agent_pm.orchestrator.trackers.linear import (
 )
 from agent_pm.session import ConfigError, Session, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
-from agent_pm.session.hosts.docker.broker import BrokerError
-from agent_pm.session.hosts.docker.host import DockerHost
 from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV, OutcomeStatus, Record
 from orchestrator_tests.process_fixtures import TimeoutExpired
 from orchestrator_tests.router_fixtures import (
@@ -2404,29 +2401,14 @@ class ScheduledUsageGates(TickBase):
                         self.lines = []
                         failed = "b" if selected else "a"
                         healthy = "a" if selected else "b"
-                        broker = mock.Mock()
-                        broker.probe_provider.side_effect = BrokerError(
-                            5, "login_required", message, "not_needed", None
-                        )
-                        host = SimpleNamespace(broker=broker)
-                        request = SimpleNamespace(
-                            provider="strata", base_url="https://strata.test/v1"
-                        )
-
-                        def usage(client, failed=failed, host=host, request=request):
-                            self.api.usage_calls.append(client)
-                            if client == failed:
-                                return DockerHost._provider_usage(host, request)
-                            return reading(10)
-
+                        self.api.usages = {failed: ConfigError(message), healthy: reading(10)}
                         labels = [label("Selected", AGENT_B, AGENT_GROUP)] if selected else []
                         fake = self.fake(
                             issue("TASK-1", "Todo", "researcher", priority=1, labels=labels),
                             issue("TASK-2", "Todo", "researcher" if selected else "pm", priority=2),
                         )
                         before = self.before()
-                        with mock.patch.object(self.api, "usage", side_effect=usage):
-                            self.assertEqual(self.tick(fake, *(["--dry-run"] if dry else [])), 0)
+                        self.assertEqual(self.tick(fake, *(["--dry-run"] if dry else [])), 0)
                         self.assertEqual(self.api.usage_calls, [failed, healthy])
                         if selected:
                             if dry:
@@ -2456,39 +2438,23 @@ class ScheduledUsageGates(TickBase):
             for host_failure in (False, True):
                 with self.subTest(dry=dry, host_failure=host_failure):
                     self.lines = []
-                    broker = mock.Mock()
                     message = (
                         "agent-pm-opencode: keychain locked"
                         if host_failure
                         else "agent-pm-opencode: no API key"
                     )
-                    broker.probe_provider.side_effect = BrokerError(
-                        11 if host_failure else 5,
-                        "keychain_failed" if host_failure else "login_required",
-                        message,
-                        "not_needed",
-                        None,
-                    )
-                    host = SimpleNamespace(broker=broker)
-                    request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
-
-                    def usage(client, host=host, request=request):
-                        self.api.usage_calls.append(client)
-                        if client == "a":
-                            return DockerHost._provider_usage(host, request)
-                        return reading(10)
-
+                    error = SessionError(message) if host_failure else ConfigError(message)
+                    self.api.usages = {"a": error, "b": reading(10)}
                     fake = self.fake(
                         issue("TASK-1", "In Progress", "researcher", priority=1),
                         issue("TASK-2", "Todo", "pm", priority=2),
                     )
                     self.resumable("TASK-1", "saved", 60)
                     before = self.before()
-                    with mock.patch.object(self.api, "usage", side_effect=usage):
-                        self.assertEqual(
-                            self.tick(fake, *(["--dry-run"] if dry else [])),
-                            2 if host_failure else 0,
-                        )
+                    self.assertEqual(
+                        self.tick(fake, *(["--dry-run"] if dry else [])),
+                        2 if host_failure else 0,
+                    )
                     self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
                     self.assertFalse(fake.issues["TASK-1"].get("comments"))
                     if host_failure:
