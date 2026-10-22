@@ -307,10 +307,13 @@ class Commands(Case):
         self.assertIn("3 12:00:01 a blocked\n", attached)
         self.assertNotIn("diagnostic", attached)
         self.assertNotIn("garbage", attached)
-        self.assertEqual(
-            self.succeeded("next-event", "--manager", "mgr", "--after", "1", "--gen", "0"),
-            "3 12:00:01 a blocked\n",
+        result = self.invoke(
+            "next-event", "--manager", "mgr", "--after", "1", "--gen", "0", "--follow"
         )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn(f"{crew.roster.events_path}: invalid event at line 2", result.stderr)
+        self.assertNotIn("diagnostic", result.stderr)
 
     def test_attach_prints_one_roster_resume_hint_and_monitoring_before_trailer(self):
         crew = Crew(Roster(self.directory))
@@ -441,7 +444,7 @@ class Commands(Case):
             for worker in ("one", "two"):
                 self.succeeded("close", worker, "--manager", "mgr")
             for issue in ("TASK-852", "TASK-853"):
-                self.succeeded("issue", issue, "--manager", "mgr")
+                self.succeeded("issue", "--manager", "mgr", issue)
             # A partial final append must wait, then become exactly one physical line.
             append("23:56:58 engineer-TASK-850-5d2a1a93 done")
             self.assertFalse(select.select([reader.stdout], [], [], 0.6)[0])

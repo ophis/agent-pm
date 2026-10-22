@@ -6,7 +6,7 @@ agent-pm, credentials, clients, board, or real HOME. Reader methods below are ve
 snapshots, checked against the repo by unit tests. The minimal ledger implements the
 same stable roster/events flock order; close/issue only remove/add fake entries.
 The real CLI/launcher sequence is separately covered by crew_cli_integration_test.py.
-This cannot reproduce Claude Code Monitor itself. A PASS excludes only this replay.
+This cannot reproduce the client Monitor itself. A PASS excludes only this replay.
 """
 
 import argparse
@@ -160,8 +160,12 @@ class Roster:
         with file_lock(Path(self.directory, "roster")), file_lock(self._events.path):
             ledger = Path(self.directory, "roster.json")
             data = json.loads(ledger.read_text())
+            before = json.dumps(data)
             yield data
-            ledger.write_text(json.dumps(data))
+            if json.dumps(data) != before:
+                candidate = ledger.with_suffix(".next")
+                candidate.write_text(json.dumps(data))
+                os.replace(candidate, ledger)
 
     def _lease(self, _data):
         pass
@@ -221,9 +225,9 @@ class Crew:
                 identity = self.roster.event_identity()
             line, event = self.roster.next_event(cursor, gen, identity=identity)
             if event is not None:
-                cursor = line
-                if EVENT.fullmatch(event):
-                    return line, printable(event)
+                if not EVENT.fullmatch(event):
+                    raise RosterError(f"{self.roster.events_path}: invalid event at line {line}")
+                return line, printable(event)
             else:
                 time.sleep(0.5)
 

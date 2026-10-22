@@ -1,12 +1,14 @@
 """Crew CLI lease identity validation and holder command shape."""
 
 import argparse
+import ast
 import contextlib
 import io
 import json
 import os
 import shlex
 import shutil
+import sys
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -19,7 +21,7 @@ from agent_pm.manager.cli import main
 from agent_pm.manager.engine.pr import VIEW_FIELDS
 from agent_pm.utils import Record, Status, StatusState, append_line
 
-from manager.tests.case import Case
+from manager.tests.case import REPO, Case
 from manager.tests.cli_case import CliCase
 from manager.tests.starters import answered, finished
 from utils.tests.cli_help import examples, parse_only
@@ -536,6 +538,19 @@ class NextEventContent(CliCase):
         self.assertEqual(self.next_event("12:00:00 w1 done"), (0, "1 12:00:00 w1 done\n", ""))
         self.assertEqual(self.calls, [])
 
+    def test_follow_exits_nonzero_on_malformed_line_without_echoing_it(self):
+        for invalid in ("", "diagnostic-private-payload"):
+            with (
+                self.subTest(invalid=invalid),
+                mock.patch("time.sleep", side_effect=TimeoutError("polled past malformed line")),
+            ):
+                code, stdout, stderr = self.next_event(invalid, "--follow")
+                self.assertEqual(code, 1)
+                self.assertEqual(stdout, "")
+                self.assertIn(f"{self.roster.events_path}: invalid event at line 1", stderr)
+                self.assertNotIn("diagnostic-private-payload", stderr)
+                self.assertEqual(self.roster.backlog()[0], 0)
+
     def test_each_event_uses_its_owners_ctl_content(self):
         for sessions, event, answer, expected in (
             (("w1",), "w1 done", "the answer\n", "the answer\n"),
@@ -621,7 +636,7 @@ class NextEventContent(CliCase):
 
     def test_follow_prints_each_event_block_and_keeps_going(self):
         record = self.launched("w1")
-        Path(self.roster.events).write_text("12:00:00 w1 done\nnoise\n12:00:01 w1 blocked\n")
+        Path(self.roster.events).write_text("12:00:00 w1 done\n12:00:01 w1 blocked\n")
         stdout = io.StringIO()
         writes = []
         stdout.write = lambda text: writes.append(text) or len(text)
@@ -646,12 +661,12 @@ class NextEventContent(CliCase):
             [text for text in writes if text],
             [
                 "1 12:00:00 w1 done\nthe answer\nline 2\n",
-                f"3 12:00:01 w1 blocked\ncontent unavailable: {ctl.COMMAND} content: "
+                f"2 12:00:01 w1 blocked\ncontent unavailable: {ctl.COMMAND} content: "
                 "no such session\n",
             ],
         )
         self.assertEqual(self.roster.backlog()[0], 0)
-        self.assertEqual(len(self.roster.backlog()[2]), 3)
+        self.assertEqual(len(self.roster.backlog()[2]), 2)
 
     def test_read_and_pending_retain_events_until_explicit_ack(self):
         self.launched("w1")
@@ -1297,3 +1312,66 @@ class HelpContracts(Case):
             popen.return_value.wait.return_value = 0
             self.assertEqual(cli.main(["hold", "--manager", "demo", "--", "codex", "--help"]), 0)
         self.assertEqual(popen.call_args.args[0], ("codex", "--help"))
+
+
+class ReproFollow(Case):
+    def test_reader_snapshots_match_source(self):
+        root = Path(REPO)
+        standalone = ast.parse((root / "manager/repro_follow.py").read_text())
+        sources = {
+            "utils/src/agent_pm/utils/files.py": ["read_regular", "_read_fd", "file_lock"],
+            "utils/src/agent_pm/utils/text.py": ["printable"],
+            "manager/src/agent_pm/manager/engine/events.py": [
+                "_identity",
+                "Events.identity",
+                "Events.read",
+                "Events.following",
+                "Events.count",
+                "Events._due",
+                "Events.due",
+            ],
+            "manager/src/agent_pm/manager/engine/roster.py": [
+                "Roster._cursor",
+                "Roster.watch_events",
+                "Roster.event_identity",
+                "Roster.next_event",
+            ],
+            "manager/src/agent_pm/manager/engine/crew.py": ["Crew.next_event"],
+            "manager/src/agent_pm/manager/cli.py": ["_next_event"],
+        }
+
+        def function(tree, name):
+            parts = name.split(".")
+            nodes = tree.body
+            if len(parts) == 2:
+                nodes = next(
+                    node
+                    for node in nodes
+                    if isinstance(node, ast.ClassDef) and node.name == parts[0]
+                ).body
+            return next(
+                node
+                for node in nodes
+                if isinstance(node, ast.FunctionDef) and node.name == parts[-1]
+            )
+
+        for file, names in sources.items():
+            source = ast.parse((root / file).read_text())
+            for name in names:
+                with self.subTest(file=file, name=name):
+                    self.assertEqual(
+                        ast.dump(function(standalone, name)), ast.dump(function(source, name))
+                    )
+
+    def test_standalone_imports_are_only_standard_library(self):
+        tree = ast.parse(Path(REPO, "manager/repro_follow.py").read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                self.assertEqual(node.level, 0)
+                names = [node.module]
+            else:
+                continue
+            for name in names:
+                self.assertIn(name.split(".")[0], sys.stdlib_module_names)

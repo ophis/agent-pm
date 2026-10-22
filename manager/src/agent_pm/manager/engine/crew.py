@@ -674,9 +674,9 @@ class Crew:
                 identity = self.roster.event_identity()
             line, event = self.roster.next_event(cursor, gen, identity=identity)
             if event is not None:
-                cursor = line
-                if EVENT.fullmatch(event):
-                    return line, printable(event)
+                if not EVENT.fullmatch(event):
+                    raise RosterError(f"{self.roster.events_path}: invalid event at line {line}")
+                return line, printable(event)
             else:
                 time.sleep(0.5)
 
