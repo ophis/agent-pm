@@ -2,8 +2,11 @@
 
 import json
 import os
+import select
 import shlex
 import subprocess
+import sys
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -355,3 +358,129 @@ class Commands(Case):
         for _ in range(2):
             self.succeeded("ack", "--manager", "mgr", "--through", "1", "--gen", "0")
         self.assertEqual(roster.backlog(), (1, 0, []))
+
+    def test_follow_delivers_every_event_across_ack_close_and_issue_processes(self):
+        # Keep the real crew/roster CLI; only the downstream board/client is fake.
+        starter = Path(self.bin_dir, self.command)
+        saved = starter.with_name("fake-ctl")
+        starter.rename(saved)
+        starter.write_text(
+            '#!/bin/sh\nif [ "$1" = router ]; then\n'
+            f'  exec {shlex.quote(str(saved))} start "$3"\nfi\n'
+            f'exec {shlex.quote(str(saved))} "$@"\n'
+        )
+        starter.chmod(0o755)
+        for worker in ("one", "two"):
+            self.succeeded("run", worker, "--manager", "mgr", "--", self.command, "start", worker)
+        path = Path(Roster(self.directory).events)
+        path.write_text("12:00:00 history done\n" * 3320)
+        identity = path.stat().st_ino
+
+        def append(text):
+            result = subprocess.run(
+                (
+                    sys.executable,
+                    "-P",
+                    "-S",
+                    "-c",
+                    "import sys; from agent_pm.utils import append_line; "
+                    "append_line(sys.argv[1], sys.argv[2], locked=True)",
+                    str(path),
+                    text,
+                ),
+                env=child_env(),
+                cwd=self.home,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+        reader = subprocess.Popen(
+            (
+                self.crew_bin,
+                "next-event",
+                "--manager",
+                "mgr",
+                "--after",
+                "3320",
+                "--gen",
+                "0",
+                "--follow",
+            ),
+            cwd=self.home,
+            env=child_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        received = b""
+
+        def expect(line):
+            nonlocal received
+            expected = line.encode()
+            deadline = time.monotonic() + 10
+            while len(received) < len(expected):
+                remaining = max(0, deadline - time.monotonic())
+                self.assertTrue(
+                    select.select([reader.stdout], [], [], remaining)[0],
+                    f"follow missed {line!r}; file has {path.read_bytes().count(10)} lines",
+                )
+                block = os.read(reader.stdout.fileno(), 65536)
+                self.assertTrue(block, f"follow exited: {reader.poll()}")
+                received += block
+            self.assertEqual(received[: len(expected)], expected)
+            received = received[len(expected) :]
+
+        try:
+            for number in range(3321, 3326):
+                event = f"23:51:06 worker-{number} done\n"
+                append(event)
+                expect(f"{number} {event}")
+            self.succeeded("ack", "--manager", "mgr", "--through", "3325", "--gen", "0")
+            for worker in ("one", "two"):
+                self.succeeded("close", worker, "--manager", "mgr")
+            for issue in ("TASK-852", "TASK-853"):
+                self.succeeded("issue", issue, "--manager", "mgr")
+            # A partial final append must wait, then become exactly one physical line.
+            append("23:56:58 engineer-TASK-850-5d2a1a93 done")
+            self.assertFalse(select.select([reader.stdout], [], [], 0.6)[0])
+            append("\n")
+            expect("3326 23:56:58 engineer-TASK-850-5d2a1a93 done\n")
+            self.assertEqual(received, b"")
+            self.assertFalse(select.select([reader.stdout], [], [], 0.6)[0])
+            self.assertIsNone(reader.poll())
+            self.assertEqual(path.stat().st_ino, identity)
+            self.assertEqual(path.read_bytes().count(b"\n"), 3326)
+            self.assertEqual(set(Roster(self.directory).entries()), {"TASK-852", "TASK-853"})
+            self.assertEqual(
+                Roster(self.directory).backlog(),
+                (3325, 0, ["23:56:58 engineer-TASK-850-5d2a1a93 done"]),
+            )
+        finally:
+            reader.terminate()
+            _, stderr = reader.communicate(timeout=10)
+        self.assertEqual(stderr, b"")
+
+    def test_standalone_follow_replay(self):
+        from manager.tests.case import REPO
+
+        result = subprocess.run(
+            (
+                sys.executable,
+                "-I",
+                "-B",
+                str(Path(REPO, "manager/repro_follow.py")),
+                "--rounds",
+                "1",
+            ),
+            cwd=self.home,
+            env=child_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        rows = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(sum(row.get("result") == "PASS" for row in rows), 2)
