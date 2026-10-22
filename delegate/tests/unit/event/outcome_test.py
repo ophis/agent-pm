@@ -453,11 +453,8 @@ class FieldPaths(Base):
             ):
                 with self.subTest(path=path, rule=rule):
                     s = {"type": "object", "properties": {"detail": properties}}
-                    with (
-                        unittest.mock.patch.object(outcome, "_schema", return_value=s),
-                        self.assertRaises(InvalidOutcome) as cm,
-                    ):
-                        self.check({**DONE, "detail": wrapped})
+                    with self.assertRaises(InvalidOutcome) as cm:
+                        outcome._conform({"detail": wrapped}, s, "")
                     self.assertEqual(str(cm.exception), message.format(path=path))
 
     def test_root_errors_keep_their_original_text(self):
@@ -475,11 +472,8 @@ class FieldPaths(Base):
             ),
         ):
             with self.subTest(message=message):
-                with (
-                    unittest.mock.patch.object(outcome, "_schema", return_value=s),
-                    self.assertRaises(InvalidOutcome) as cm,
-                ):
-                    self.check(data)
+                with self.assertRaises(InvalidOutcome) as cm:
+                    outcome._conform(data, s, "")
                 self.assertEqual(str(cm.exception), message)
 
 
