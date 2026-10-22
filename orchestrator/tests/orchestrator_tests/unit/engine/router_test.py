@@ -3050,7 +3050,7 @@ class RunLaunching(OuterBase):
     def test_build_detaches_its_linear_run_after_its_start_row(self):
         self.assertEqual(self.outer(), 0)
         self.assertEqual(self.detached(), self.expected())
-        self.assertEqual((len(self.api.detached), os.path.lexists(self.rd)), (1, False))
+        self.assertEqual((len(self.api.detached), os.path.lexists(self.rd)), (1, True))
         self.assertEqual(self.api.runs_at_detach, [self.raw_runs()])
         self.assertEqual(
             json.loads(self.raw_runs()),
@@ -3187,6 +3187,20 @@ class RunLaunching(OuterBase):
         self.assertEqual(
             [json.loads(line)["kind"] for line in self.raw_runs().splitlines()], ["start", "resume"]
         )
+
+    def test_resume_without_an_outcome_keeps_the_comment_before_build_started_actionable(self):
+        comment = {**USER_NOTE, "body": "Add another line.", "createdAt": "2026-10-22T08:44:37Z"}
+        started = {
+            "body": "Build started: first build",
+            "createdAt": "2026-10-22T08:44:37.900Z",
+            "user": {"email": "engineer@agents.test", "name": "Engineer", "isMe": False},
+        }
+        self.gql.issue = node(comments=[comment, started])
+        self.assertIsNone(self.api.outcomes.get(ID))
+        self.assertEqual(self.outer(mode="resume"), 0)
+        requirements, earlier = self.input().split("## Earlier comments", 1)
+        self.assertIn("Add another line.", requirements)
+        self.assertNotIn("Add another line.", earlier)
 
     def test_target_gets_the_runs_delegate_class_and_workdir(self):
         cfg = self.cfg()

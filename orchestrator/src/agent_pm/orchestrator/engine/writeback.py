@@ -47,6 +47,7 @@ from agent_pm.utils import (
     ConfinedReason,
     OutcomeStatus,
     one_line,
+    parse_time,
     read_confined,
     save,
     timestamp,
@@ -190,16 +191,33 @@ def _guarded_move(ctx, issue, ident, to, frm):
 def _attempt(record):
     return (
         isinstance(record, dict)
-        and record.keys() <= {"started_at", "seq", "ended_at"}
+        and record.keys() <= {"started_at", "seq", "ended_at", "input_cutoff"}
         and isinstance(record.get("started_at"), str)
         and type(record.get("seq")) is int
         and record["seq"] >= 0
         and isinstance(record.get("ended_at", ""), str)
+        and _cutoffs(record)
     )
 
 
+def _cutoffs(value):
+    try:
+        return all(
+            isinstance(value[k], str) and parse_time(value[k]).utcoffset() is not None
+            for k in ("input_cutoff", "built_cutoff")
+            if k in value
+        )
+    except ValueError:
+        return False
+
+
 def _entry(value):
-    if not isinstance(value, dict) or not value.keys() <= {"steps", "attempts"}:
+    if not isinstance(value, dict) or not value.keys() <= {
+        "steps",
+        "attempts",
+        "input_cutoff",
+        "built_cutoff",
+    }:
         return False
     steps, attempts = value.get("steps", []), value.get("attempts", {})
     return (
@@ -207,6 +225,7 @@ def _entry(value):
         and all(isinstance(s, str) for s in steps)
         and isinstance(attempts, dict)
         and all(n.isdigit() and _attempt(r) for n, r in attempts.items())
+        and _cutoffs(value)
     )
 
 
@@ -252,6 +271,33 @@ def _exclusive(ctx):
 
 def _done(ctx):
     return _ledger(ctx).get(ctx.sid, {}).get("steps", [])
+
+
+def build_cutoff(ctx) -> str | None:
+    """Only input snapshots whose real done outcome was delivered consume requirements."""
+    cutoffs = [r["built_cutoff"] for r in _ledger(ctx).values() if "built_cutoff" in r]
+    return max(cutoffs, key=parse_time) if cutoffs else None
+
+
+def prepare_input(ctx, cutoff: str) -> None:
+    """Save the rendered snapshot before detach; Begun binds it to the actual attempt."""
+    with _exclusive(ctx) as held:
+        if not held:
+            raise OSError("could not lock build input snapshot")
+        ledger = _ledger(ctx)
+        ledger.setdefault(ctx.sid, {})["input_cutoff"] = cutoff
+        save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
+
+
+def _built(ctx, outcome, attempt):
+    if TASKS[ctx.role].input != "build" or outcome.status != OutcomeStatus.DONE:
+        return
+    ledger = _ledger(ctx)
+    entry = ledger.get(ctx.sid, {})
+    cutoff = entry.get("attempts", {}).get(str(attempt), {}).get("input_cutoff")
+    if cutoff and "outcome" in entry.get("steps", []):
+        entry["built_cutoff"] = max((cutoff, entry.get("built_cutoff", cutoff)), key=parse_time)
+        save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
 
 
 def _step(ctx, step, write, ref=None):
@@ -450,6 +496,10 @@ def _session(ctx, cfg, client, attempt, *, now, end=None) -> bool:
     """
     record = _ledger(ctx).get(ctx.sid, {}).get("attempts", {}).get(str(attempt))
     record = record or {"started_at": now(), "seq": 0}
+    if end is None and "input_cutoff" not in record:
+        cutoff = _ledger(ctx).get(ctx.sid, {}).get("input_cutoff")
+        if cutoff:
+            record["input_cutoff"] = cutoff
     if "ended_at" in record or end is None and record["seq"]:
         return True
     rec = run_comments.base(
@@ -567,6 +617,10 @@ def replay(
     attempt = _replayed_attempt(_ledger(ctx).get(sid, {}).get("attempts", {}), rows)
     ctx = replace(ctx, resume=attempt > 1)
     if "outcome" in _done(ctx):
+        if not dry:
+            with _exclusive(ctx) as held:
+                if held:
+                    _built(ctx, outcome, attempt)
         return None
     if dry:
         return True
@@ -574,6 +628,8 @@ def replay(
         if not held:
             return False
         done = "outcome" in _done(ctx) or finish(ctx, outcome)
+        if done:
+            _built(ctx, outcome, attempt)
         end = (None, outcome, False)
         _session(ctx, cfg, claim.client, attempt, now=now, end=end)
         return done
@@ -628,6 +684,8 @@ def _deliver(ctx, cfg, claim, event, *, now) -> bool:
         ok = f"{steps}outcome" in _done(ctx) or finish(ctx, failed, steps=steps)
     else:
         ok = outcome is None or "outcome" in _done(ctx) or finish(ctx, outcome)
+        if outcome is not None and ok:
+            _built(ctx, outcome, attempt)
     if event.limit is not None:
         ok = _limited(ctx, cfg.runs_log, claim, attempt, event.limit["resets_at"]) and ok
     elif outcome is None:

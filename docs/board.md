@@ -117,6 +117,8 @@ A run that ended leaves its TUI open for pane follow-ups; the issue's next run, 
 
 Each session's `Run <sid>` comment holds its resume command. Move the issue out of In Progress before opening it, or the router may resume it after 30 idle minutes.
 
+Build inputs mark user comments as already built only through the input snapshot of a real `done` outcome whose write-back completed. Start comments, interruptions, usage limits, failed runs and questions leave requirements pending. Comments added after that snapshot remain requirements, including after resume. If delivery evidence is missing, the next input keeps the requirements.
+
 ### Run limits
 
 A run starts only when both layers have room: its role has fewer live runs than `[roles.<role>] max_runs` (packaged: 3 for researcher, pm and engineer; another stage's role without a table: 1), and its client fewer than its `[client_max_runs]` entry. No client is limited by default: an unlisted client is unlimited. Set limits in `~/.agent-pm/config.local.toml`, e.g. `opencode = 1`, as the host's local models run one job at a time:

@@ -151,6 +151,48 @@ class BuildInputs(Case):
             note("Bob says more", "2026-09-08T00:00:00.000Z", ("bob@example.com", "Bob")),
         )
 
+    def test_an_interrupted_start_does_not_consume_user_requirements(self):
+        ns = (
+            note("Add another line.", "2026-10-22T08:44:37.000Z", ANN),
+            note("Build started: first build", "2026-10-22T08:44:37.900Z"),
+            note("Run sid · interrupted", "2026-10-22T08:44:38.000Z"),
+        )
+        text = inputs.render(
+            issue("D", ident="ENG-7", notes=ns),
+            "engineer",
+            inputs.Sources((), None),
+            target=self.TARGET,
+            docs=DOCS,
+        )
+        requirements, earlier = text.split("## Earlier comments", 1)
+        self.assertIn("Ann, 2026-10-22T08:44:37.000Z:\nAdd another line.", requirements)
+        self.assertNotIn("Add another line.", earlier)
+
+    def test_comments_after_the_delivered_snapshot_remain_requirements(self):
+        cutoff = "2026-10-22T08:44:37.000Z"
+        text = inputs.render(
+            issue(
+                "D",
+                ident="ENG-7",
+                notes=(
+                    note("Delivered line.", cutoff, ANN),
+                    note("Add another line.", "2026-10-22T08:44:37.100Z", ANN),
+                    note("Build started", "2026-10-22T08:44:37.900Z"),
+                    note("Build ready", "2026-10-22T09:00:00.000Z"),
+                ),
+            ),
+            "engineer",
+            inputs.Sources((), None),
+            target=self.TARGET,
+            docs=DOCS,
+            build_cutoff=cutoff,
+        )
+        requirements, earlier = text.split("## Earlier comments", 1)
+        self.assertIn("Add another line.", requirements)
+        self.assertNotIn("Delivered line.", requirements)
+        self.assertIn("Delivered line.", earlier)
+        self.assertNotIn("Add another line.", earlier)
+
     def test_golden_direct_issue(self):
         iss = issue(
             lines(
@@ -163,7 +205,14 @@ class BuildInputs(Case):
         src = inputs.Sources(
             (inputs.Doc(BASE + "Research/r.md", "Research/r.md", "r"), self.PRD), None
         )
-        got = inputs.render(iss, "engineer", src, target=self.TARGET, docs=DOCS)
+        got = inputs.render(
+            iss,
+            "engineer",
+            src,
+            target=self.TARGET,
+            docs=DOCS,
+            build_cutoff="2026-09-04T00:00:00.000Z",
+        )
         self.assertEqual(
             got,
             lines(

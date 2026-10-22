@@ -8,7 +8,7 @@ import shutil
 import tempfile
 import threading
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
@@ -1602,6 +1602,8 @@ class Linear:
         self.calls, self.comments, self.state, self.fail = [], {}, state, fail
 
     def __call__(self, query, *, service, timeout=None, **v):
+        if query == linear_tracker.Q_STATE_NAME:
+            return {"workflowState": {"name": board_ids.STATE_NAMES[v["i"]]}}
         op = EVENT_OPS[query]
         self.calls.append((service, op, v))
         if (error := self.fail(op, v)) is not None:
@@ -1725,6 +1727,99 @@ class Events(RunCase):
         return delegate_event(
             "finished", attempt, returncode=rc, outcome=outcome, error=error, limit=limit
         )
+
+
+class BuildInputCutoffs(Events):
+    CUTOFF = "2026-10-22T08:44:37.000Z"
+    NEXT = "2026-10-22T09:14:37.000Z"
+    DONE = asdict(Outcome(status="done", title="Build", summary="Delivered"))
+
+    def ctx(self):
+        return writeback.for_claim(self.cfg, CLAIM, self.accounts()(CLAIM), attempt=1)
+
+    def test_interrupted_attempt_keeps_requirements_until_a_resumed_done_delivery(self):
+        ctx = self.ctx()
+        writeback.prepare_input(ctx, self.CUTOFF)
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(delegate_event("progress", name="start", text="first build")))
+        self.assertTrue(self.deliver(self.finished(1, error="stopped: Stopped: 143")))
+        self.assertIsNone(writeback.build_cutoff(ctx))
+        writeback.prepare_input(ctx, self.NEXT)
+        self.assertTrue(self.deliver(delegate_event("begun", attempt=2)))
+        self.assertIsNone(writeback.build_cutoff(ctx))
+        self.assertTrue(self.deliver(self.finished(outcome=self.DONE, attempt=2)))
+        self.assertEqual(writeback.build_cutoff(ctx), self.NEXT)
+
+    def test_a_done_delivery_consumes_its_bound_snapshot_not_a_later_preparation(self):
+        ctx = self.ctx()
+        writeback.prepare_input(ctx, self.CUTOFF)
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        writeback.prepare_input(ctx, self.NEXT)
+        self.assertTrue(self.deliver(self.finished(outcome=self.DONE)))
+        self.assertEqual(writeback.build_cutoff(ctx), self.CUTOFF)
+        self.assertTrue(self.deliver(self.finished(outcome=self.DONE)))
+        self.assertEqual(writeback.build_cutoff(ctx), self.CUTOFF)
+
+    def test_outcome_without_a_bound_begun_retains_requirements(self):
+        ctx = self.ctx()
+        writeback.prepare_input(ctx, self.CUTOFF)
+        self.assertTrue(self.deliver(self.finished(outcome=self.DONE)))
+        self.assertIsNone(writeback.build_cutoff(ctx))
+
+    def test_non_done_outcomes_do_not_consume_requirements(self):
+        self.now = iter([STARTED] * 20)
+        for outcome, error, limit in (
+            ({**self.DONE, "status": "failed"}, "", None),
+            ({**self.DONE, "status": "needs_input", "questions": ["Which line?"]}, "", None),
+            (None, TURN_FAILED, None),
+            (None, "", {"resets_at": None}),
+        ):
+            with self.subTest(outcome=outcome, error=error, limit=limit):
+                ctx = self.ctx()
+                writeback.prepare_input(ctx, self.CUTOFF)
+                self.assertTrue(self.deliver(delegate_event("begun")))
+                self.assertTrue(
+                    self.deliver(self.finished(outcome=outcome, error=error, limit=limit))
+                )
+                self.assertIsNone(writeback.build_cutoff(ctx))
+                self.ledger_reset(RUN_SID)
+
+    def test_recover_promotes_only_after_outcome_writeback_completes(self):
+        ctx = self.ctx()
+        writeback.prepare_input(ctx, self.CUTOFF)
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.linear.fail = lambda op, _v: LinearError("offline") if op == "state" else None
+        self.assertFalse(self.deliver(self.finished(outcome=self.DONE)))
+        self.assertIsNone(writeback.build_cutoff(ctx))
+        self.linear.fail = lambda _op, _v: None
+        outcome = Outcome(**self.DONE)
+        self.assertTrue(
+            writeback.replay(
+                self.cfg, RUN_ISSUE, RUN_SID, outcome, accounts=self.accounts(), now=lambda: LATEST
+            )
+        )
+        self.assertEqual(writeback.build_cutoff(ctx), self.CUTOFF)
+        self.assertIsNone(
+            writeback.replay(
+                self.cfg, RUN_ISSUE, RUN_SID, outcome, accounts=self.accounts(), now=lambda: LATEST
+            )
+        )
+
+    def test_previous_delivery_survives_an_interrupted_later_session(self):
+        ctx = self.ctx()
+        writeback.prepare_input(ctx, self.CUTOFF)
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(self.finished(outcome=self.DONE)))
+        writeback.prepare_input(replace(ctx, sid=OTHER_SID), self.NEXT)
+        self.assertEqual(writeback.build_cutoff(ctx), self.CUTOFF)
+
+    def test_invalid_cutoff_metadata_is_not_delivery_evidence(self):
+        ctx = self.ctx()
+        for cutoff in ("bad", "2026-10-22T08:44:37", 123):
+            with self.subTest(cutoff=cutoff):
+                with open(os.path.join(ctx.workdir, writeback.LEDGER), "w") as f:
+                    json.dump({RUN_SID: {"built_cutoff": cutoff}}, f)
+                self.assertIsNone(writeback.build_cutoff(ctx))
 
 
 class ForClaim(RunCase):
