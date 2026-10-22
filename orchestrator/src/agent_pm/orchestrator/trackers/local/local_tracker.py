@@ -86,6 +86,9 @@ class LocalTracker(Tracker):
         self.board, self.roles, self._cache, self.now = board, frozenset(roles), None, now
         self.prefix = prefix
 
+    def state_name(self, state: IssueState) -> str:
+        return f"{LOCAL_STATES[state].value}/"
+
     def files(self):
         if self._cache is None:
             self._cache = {each.id: each for each in scan(self.board)}

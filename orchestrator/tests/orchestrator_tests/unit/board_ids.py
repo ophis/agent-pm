@@ -37,6 +37,14 @@ HEADER = (
     + 'delegates = { default = "harness", harness = { implementation = "agent_pm.delegate:HarnessDelegate" } }\n'
     + 'local.issue_prefix = "LOC"\n'
 )
+STATE_NAMES = dict(
+    zip(
+        STATES.values(),
+        ("Todo", "In Progress", "In Review", "Handoff", "Done", "Canceled", "Backlog"),
+        strict=True,
+    )
+)
+
 ACCOUNTS = {r: f"{r}@agents.test" for r in ("researcher", "pm", "engineer")}
 
 

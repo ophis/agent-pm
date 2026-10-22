@@ -30,7 +30,7 @@ from agent_pm.orchestrator.trackers.linear import (
 from agent_pm.session import SessionStatus
 from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV
 from orchestrator_tests.unit import run_fixtures
-from orchestrator_tests.unit.board_ids import ACCOUNTS, HEADER, TEAM, team_node
+from orchestrator_tests.unit.board_ids import ACCOUNTS, HEADER, STATE_NAMES, TEAM, team_node
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.board_ids import role as role_table
 from orchestrator_tests.unit.clock import logs_at
@@ -251,6 +251,8 @@ class FakeLinear:
         }
 
     def __call__(self, query, *, service, **v):
+        if query == linear_tracker.Q_STATE_NAME:
+            return {"workflowState": {"name": STATE_NAMES[v["i"]]}}
         self.queries.append((query, v))
         self.services.append(service)
         if (value := self._identity(query, v)) is not None:

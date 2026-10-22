@@ -47,6 +47,8 @@ LISTED = {IssueState.READY: State.TODO, IssueState.RUNNING: State.IN_PROGRESS}
 
 URL = "https://agent-pm.invalid/run/"
 
+Q_STATE_NAME = "query($i: String!) { workflowState(id: $i) { name } }"
+
 STAMPS = "canceledAt completedAt"
 Q_ISSUE = (
     "query($i: String!, $after: String) { issue(id: $i) { state { id type } updatedAt "
@@ -285,11 +287,20 @@ class LinearTracker(Tracker):
         self.gql, self.state_ids, self.team_id, self.roles = gql, states, team_id, roles
         self.finished_ids, self.humans, self.selves = finished, humans, selves
         self.say, self.hist = say, {}
+        self.state_names: dict[IssueState, str] = {}
         self.task_group, self.label_tasks = task_group, label_tasks or {}
         self.agent_group, self.label_clients = agent_group, label_clients or {}
         self.users = {role: uid for uid, role in (roles or {}).items()}
         self.states = {states[k]: v for k, v in STATES.items()} if states else {}
         self.ids = {v: states[k] for k, v in MOVES.items()} if states else {}
+
+    def state_name(self, state: IssueState) -> str:
+        if state not in self.state_names:
+            _need("states", self.state_ids)
+            self.state_names[state] = self.gql(Q_STATE_NAME, i=self.ids[state])["workflowState"][
+                "name"
+            ]
+        return self.state_names[state]
 
     def _state(self, sid):
         found = self.states.get(sid)

@@ -227,6 +227,8 @@ class Gql:
         self.comments = dict(comments or {})
 
     def __call__(self, query, **v):
+        if query == linear_tracker.Q_STATE_NAME:
+            return {"workflowState": {"name": board_ids.STATE_NAMES[v["i"]]}}
         name = NAMES[query]
         self.calls.append((name, v))
         r = self.fail(name, v)
@@ -996,9 +998,23 @@ class ApprovalMessages(Base):
         )
         self.assertEqual(writeback.say("Build ready:", "a\nb"), "Build ready:\na\nb")
 
+    def test_local_completion_messages_use_local_states(self):
+        from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
+
+        local = LocalTracker("unused", (), prefix="LOC")
+        ctx = replace(self.ctx(), tracker=local)
+        body, _, _ = writeback._completion_body(
+            ctx, Outcome("needs_input", "Question", "", questions=["Which repo?"])
+        )
+        self.assertIn("move this issue back to ready/.", body)
+        body, _, _ = writeback._completion_body(
+            replace(ctx, role="pm"), Outcome("done", "Design", "Ready")
+        )
+        self.assertIn("move this issue to approved/", body)
+
     def test_approve_line(self):
-        self.assertEqual(writeback.approve_line(None), APPROVE)
-        self.assertEqual(writeback.approve_line("ophis/agent-pm"), APPROVE_MAPPED)
+        self.assertEqual(writeback.approve_line(None, "Handoff"), APPROVE)
+        self.assertEqual(writeback.approve_line("ophis/agent-pm", "Handoff"), APPROVE_MAPPED)
 
     def test_queries_verbatim(self):
         self.assertEqual(

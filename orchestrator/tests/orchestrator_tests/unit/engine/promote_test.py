@@ -148,7 +148,7 @@ class PartialPromotion(Base):
             (
                 "In Review",
                 [
-                    promote.NO_INSTRUCTIONS
+                    promote.NO_INSTRUCTIONS.format(state="In Review")
                     + "\n\nCould not subscribe me@x.com: LinearError: linear api error: boom"
                 ],
             ),
@@ -513,7 +513,9 @@ class HandoffPromotion(Base):
         self.fake.said("DR-1", 50, user=AGENT, body="agent")
         self.fake.said("DR-1", 49, user=OTHER, body="other")
         self.fake.said("DR-1", 48, user=None, body="bot")
-        self.fake.said("DR-1", 47, user=AGENT, body=promote.NO_INSTRUCTIONS)
+        self.fake.said(
+            "DR-1", 47, user=AGENT, body=promote.NO_INSTRUCTIONS.format(state="In Review")
+        )
         self.fake.said("DR-1", 46, body="mine")
         self.fake.said("DR-1", 45, user={"email": "ME@X.com", "name": "Me"}, body="caps")
         self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
@@ -599,7 +601,8 @@ class HandoffPromotion(Base):
                 self.run_main()
                 self.assertEqual(self.fake.children, {})
                 self.assertEqual(
-                    (src["state"], src["posted"]), ("In Review", [promote.NO_INSTRUCTIONS])
+                    (src["state"], src["posted"]),
+                    ("In Review", [promote.NO_INSTRUCTIONS.format(state="In Review")]),
                 )
 
     def test_no_instructions_bounces(self):
@@ -616,7 +619,7 @@ class HandoffPromotion(Base):
                 "In Review",
                 {"id": "u-researcher"},
                 ["me@x.com", "b@x.com"],
-                [promote.NO_INSTRUCTIONS],
+                [promote.NO_INSTRUCTIONS.format(state="In Review")],
             ),
         )
         self.assertEqual(
@@ -867,7 +870,10 @@ class LocalBoardPromotion(Base):
         self.approved(comments="")
         self.assertEqual(self.run_main(), 0, self.err)
         self.assertEqual(self.tracker().read("LOC-1").state, IssueState.REVIEW)
-        self.assertEqual(self.tracker().detail("LOC-1").comments[-1].body, promote.NO_INSTRUCTIONS)
+        self.assertEqual(
+            self.tracker().detail("LOC-1").comments[-1].body,
+            "Handoff needs a comment saying what to build next. Moving back to review/.",
+        )
         self.assertFalse(os.path.exists(os.path.join(self.board, "pm")))
 
     def test_dry_run_writes_nothing(self):
@@ -890,6 +896,9 @@ class LocalBoardPromotion(Base):
         """The source archived meanwhile: its bounce fails as a handoff-error, not a crash."""
 
         class Archived:
+            def state_name(self, _state):
+                return "review/"
+
             def comment_and_move(self, *_, **__):
                 raise IssueError("LOC-1: archived")
 
@@ -900,7 +909,7 @@ class LocalBoardPromotion(Base):
         [record] = logged(self.logs)
         self.assertEqual(
             (record["kind"], record["reason"], record["error"]),
-            ("handoff-error", "could not move to In Review", "IssueError: LOC-1: archived"),
+            ("handoff-error", "could not move to review/", "IssueError: LOC-1: archived"),
         )
 
 

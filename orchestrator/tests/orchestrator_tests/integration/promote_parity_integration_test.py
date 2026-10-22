@@ -64,7 +64,7 @@ class Bounce(BinFlow):
         child = self.handoff(ago=timedelta(minutes=20))
         self.promote_tick()
         body = self.assert_bounced(child, [])
-        self.assertTrue(body.startswith(NO_INSTRUCTIONS), body)
+        self.assertTrue(body.startswith(NO_INSTRUCTIONS.format(state="In Review")), body)
         self.assertEqual(
             self.said(), [f"promote handoff-bounce {SOURCE} to=in_review reason=no instructions"]
         )

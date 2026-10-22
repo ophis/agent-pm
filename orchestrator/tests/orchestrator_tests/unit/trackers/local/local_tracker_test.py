@@ -74,6 +74,12 @@ class Board(Case):
 
 
 class States(Case):
+    def test_display_names_are_board_directories(self):
+        tracker = LocalTracker("unused", (), prefix="LOC")
+        self.assertEqual(tracker.state_name(IssueState.READY), "ready/")
+        self.assertEqual(tracker.state_name(IssueState.REVIEW), "review/")
+        self.assertEqual(tracker.state_name(IssueState.APPROVED), "approved/")
+
     def test_issue_states(self):
         self.assertEqual(
             ISSUE_STATES,

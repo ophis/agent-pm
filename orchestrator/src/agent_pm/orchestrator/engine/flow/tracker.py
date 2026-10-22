@@ -29,6 +29,10 @@ class Tracker(ABC):
     batch = 1  # snapshots' idents per call
 
     @abstractmethod
+    def state_name(self, state: IssueState) -> str:
+        """The current tracker's human-readable state name."""
+
+    @abstractmethod
     def read(self, ident: str) -> Snapshot | None:
         """None: no such issue."""
 

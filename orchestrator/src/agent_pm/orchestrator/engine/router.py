@@ -140,10 +140,10 @@ from agent_pm.utils import (
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
 CAP = 4
-NOT_QUEUED = "not a Todo issue assigned to a role account"
+NOT_QUEUED = "not a {state} issue assigned to a role account"
 SKEW = timedelta(minutes=5)
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
-INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
+INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the {state} queue."
 BUSY = "another router is running"
 USAGE = (
     "usage: agent-pm-orchestrator router [--dry-run] [--issue ID] "
@@ -214,7 +214,7 @@ def rank(issue):
     return issue["priority"] or 5  # 0 = no priority = lowest
 
 
-def task_for(pick, role, role_tasks):
+def task_for(pick, role, role_tasks, ready):
     if pick.error is not None:
         return None, pick.error
     if pick.name is None:
@@ -222,7 +222,7 @@ def task_for(pick, role, role_tasks):
     if pick.name not in role_tasks:
         return None, (
             f'Task "{pick.name}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
-            "Fix the task or the assignee, then move the issue back to Todo."
+            f"Fix the task or the assignee, then move the issue back to {ready()}."
         )
     return pick.name, None
 
@@ -425,7 +425,11 @@ class Board:
             elif not wait or sid_times(self.entries, sid)[-1] < self.now - LIVE:
                 self.say("recover", ident, to="todo", reason="not resumable", sid=sid)
                 self.comment_and_move(
-                    issue, INTERRUPTED, IssueState.READY, IssueState.RUNNING, "recover"
+                    issue,
+                    INTERRUPTED.format(state=self.tracker.state_name(IssueState.READY)),
+                    IssueState.READY,
+                    IssueState.RUNNING,
+                    "recover",
                 )
         elif not wait or entered is None or entered < self.now - STALE:
             self.say(
@@ -436,7 +440,11 @@ class Board:
                 entered=entered.isoformat() if entered else None,
             )
             self.comment_and_move(
-                issue, INTERRUPTED, IssueState.READY, IssueState.RUNNING, "recover"
+                issue,
+                INTERRUPTED.format(state=self.tracker.state_name(IssueState.READY)),
+                IssueState.READY,
+                IssueState.RUNNING,
+                "recover",
             )
         return False
 
@@ -484,7 +492,11 @@ class Board:
             )
         except delegate.ConfigError as error:
             self.say("launch-error", ident, client=client, error=one_line(error))
-            self.bounce(issue, _label_client_message(client, error), frm)
+            self.bounce(
+                issue,
+                _label_client_message(client, error, self.tracker.state_name(IssueState.READY)),
+                frm,
+            )
             return True
 
     def resumption(self, issue, sid, new_sid):
@@ -494,7 +506,12 @@ class Board:
         """
         ident, role, resumed = issue["identifier"], self.role(issue), client_of(self.entries, sid)
         current = self.tracker.recheck(issue["id"])
-        task, task_error = task_for(current.task, role, self.cfg.roles[role].tasks)
+        task, task_error = task_for(
+            current.task,
+            role,
+            self.cfg.roles[role].tasks,
+            lambda: self.tracker.state_name(IssueState.READY),
+        )
         client, source, client_error = client_for(current.client, self.cfg.roles[role].run.client)
         if client_error or task_error or client == resumed:
             if self.dry:
@@ -550,9 +567,10 @@ class Board:
     def unqueued(self, ident):
         """Why ident is not queued, with the tracker's refusal."""
         current = self.tracker.recheck(ident)
-        reasons = [] if current.ready and current.role else [NOT_QUEUED]
+        reason = NOT_QUEUED.format(state=self.tracker.state_name(IssueState.READY))
+        reasons = [] if current.ready and current.role else [reason]
         reasons += [current.refused] if current.refused else []
-        return "; ".join(reasons) or NOT_QUEUED
+        return "; ".join(reasons) or reason
 
     def claim(self, issue, full, clients=()):
         ident = issue["identifier"]
@@ -560,7 +578,7 @@ class Board:
         current = self.tracker.recheck(issue["id"])
         role = current.role
         if not current.ready:
-            skip = "no longer Todo"
+            skip = f"no longer {self.tracker.state_name(IssueState.READY)}"
         elif role is None:
             skip = "not assigned to a role"
         elif role in full:
@@ -574,7 +592,12 @@ class Board:
         if skip:
             self.say("claim-skip", ident, reason=skip)
             return None
-        task, task_error = task_for(current.task, role, self.cfg.roles[role].tasks)
+        task, task_error = task_for(
+            current.task,
+            role,
+            self.cfg.roles[role].tasks,
+            lambda: self.tracker.state_name(IssueState.READY),
+        )
         client, source, client_error = client_for(current.client, self.cfg.roles[role].run.client)
         if self.dry:
             self.say(
@@ -810,11 +833,11 @@ def _outer(a, cfg, *, gql, run, keychain, wiring, now, attended):
     return 0
 
 
-def _label_client_message(client, error):
+def _label_client_message(client, error, ready):
     first = str(error).split("\n", 1)[0]
     return (
         f'Client "{client}" chosen on the issue, but the run could not be built: {first}\n\n'
-        "Fix the issue's client or the client configuration, then move this issue back to Todo."
+        f"Fix the issue's client or the client configuration, then move this issue back to {ready}."
     )
 
 
@@ -823,7 +846,7 @@ def _label_client_error(spec, ctx, error):
     try:
         ctx.tracker.comment_and_move(
             ctx.issue_id,
-            _label_client_message(spec.client, error),
+            _label_client_message(spec.client, error, ctx.tracker.state_name(IssueState.READY)),
             to=IssueState.REVIEW,
             frm=IssueState.RUNNING,
             notify=True,
