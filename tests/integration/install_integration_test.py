@@ -451,6 +451,7 @@ class InstallTest(Case):
             *provider,
             *(logins or ()),
             (WRITE_Q, "y"),
+            *([(WRITE_Q, "y")] if "opencode" in (chosen or "") else []),
             *then,
         ]
         return self.run_install(*args, answers=answers, ctty=ctty)
@@ -1173,7 +1174,7 @@ class InstallTest(Case):
         result = self.run_install(
             *flags,
             stdin=KEY + "\n",
-            answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 5],
+            answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 6],
         )
         self.assert_ok(result)
         exe = f"{self.agent_pm}/opencode/bin/opencode"
@@ -1249,6 +1250,7 @@ class InstallTest(Case):
                 (WRITE_Q, "y"),
                 (OPENCODE_LOGIN_Q, "lan"),
                 (r"API key:", KEY),
+                (WRITE_Q, "y"),
                 (WRITE_Q, "y"),
             ],
         )
@@ -1363,20 +1365,26 @@ class InstallTest(Case):
         )
         (self.fakes / "postinstall_broken").unlink()
         result = self.run_install(
-            *flags, stdin=KEY + "\n", answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 3]
+            *flags, stdin=KEY + "\n", answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 4]
         )
         self.assert_ok(result)
         self.assertIn("1.19.3", (self.fakes / "opencode_version").read_text())
 
-    def opencode_only(self, provider_answer="y"):
-        flags = ("--clients", "opencode", "--no-docker", "--opencode-provider", "lan")
+    def opencode_only(self, provider_answer="y", *, provider="lan", path_answer="y"):
+        flags = ("--clients", "opencode", "--no-docker", "--opencode-provider", provider)
         flags += ("--opencode-url", "http://localhost:8080/v1", "--opencode-model", "m")
         flags += ("--opencode-context", "65536", "--opencode-key-stdin")
-        provider = [(WRITE_Q, provider_answer)] if provider_answer is not None else []
+        provider_answers = [(WRITE_Q, provider_answer)] if provider_answer is not None else []
         return self.run_install(
             *flags,
             stdin=KEY + "\n",
-            answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 3, *provider, (WRITE_Q, "y")],
+            answers=[
+                (SUDO_Q, PASSWORD),
+                *[(WRITE_Q, "y")] * 3,
+                *provider_answers,
+                (WRITE_Q, "y"),
+                (WRITE_Q, path_answer),
+            ],
         )
 
     def opencode_rerun(self, *answers):
@@ -1414,6 +1422,75 @@ class InstallTest(Case):
         self.assertIn("> [ ] Claude Code", result.tty)
         self.assertNotIn("opencode plugin", "\n".join(self.calls()))
         self.assertIn(f"==> OpenCode plugin\n    skip: {SPEC} at {OLD[:12]}\n", result.stderr)
+
+    def assert_opencode_in_new_shell(self, profile):
+        result = subprocess.run(
+            [
+                "bash",
+                "--noprofile",
+                "--norc",
+                "-c",
+                '. "$1"; command -v opencode; opencode --version',
+                "bash",
+                str(profile),
+            ],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(), [f"{self.agent_pm}/opencode/bin/opencode", "1.19.3"]
+        )
+
+    def test_opencode_path_fresh_install_preserves_selected_provider(self):
+        result = self.opencode_only(provider="strata")
+        self.assert_ok(result)
+        self.assert_opencode_in_new_shell(Path(self.home, ".zprofile"))
+        config = json.loads(Path(self.home, ".config/opencode/opencode.jsonc").read_text())
+        self.assertIn("m", config["provider"]["strata"]["models"])
+        self.assertEqual(json.loads(self.auth_json().read_text())["strata"]["type"], "api")
+        self.assert_secret_free(KEY, PASSWORD, result=result)
+
+    def test_opencode_path_bash_profile(self):
+        self.env["SHELL"] = "/bin/bash"
+        self.assert_ok(self.opencode_only())
+        self.assert_opencode_in_new_shell(Path(self.home, ".bash_profile"))
+        self.assertFalse(Path(self.home, ".zprofile").exists())
+
+    def test_opencode_path_upgrade_and_rerun(self):
+        # Declining leaves the profile in the shape made by installers before TASK-858.
+        self.assert_ok(self.opencode_only(path_answer="n"))
+        profile = Path(self.home, ".zprofile")
+        line = 'export PATH="$HOME/.agent-pm/opencode/bin:$PATH"'
+        self.assertNotIn(line, profile.read_text())
+        before = profile.read_text()
+        self.assert_ok(self.opencode_rerun((WRITE_Q, "y")))
+        self.assertEqual(profile.read_text(), before + line + "\n")
+        self.assertFalse(any(c.startswith("npm install") for c in self.calls()))
+        self.assert_opencode_in_new_shell(profile)
+        self.assert_ok(self.opencode_rerun())
+        self.assertEqual(profile.read_text().splitlines().count(line), 1)
+        self.assertEqual(self.ledger().count(f"profile\t{profile}\t{line}"), 1)
+        self.assert_opencode_in_new_shell(profile)
+
+    def test_unselected_opencode_does_not_change_its_path(self):
+        self.assert_ok(self.fresh("--no-docker"))
+        profile = Path(self.home, ".zprofile")
+        before = profile.read_bytes()
+        self.assertNotIn(".agent-pm/opencode", profile.read_text())
+        self.assert_ok(self.again())
+        self.assertEqual(profile.read_bytes(), before)
+        self.assertFalse(Path(self.agent_pm, "opencode").exists())
+
+    def test_opencode_path_cleanup_preserves_user_lines(self):
+        profile = Path(self.home, ".zprofile")
+        profile.write_text("export EDITOR=vim\n")
+        self.assert_ok(self.opencode_only())
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(profile.read_text(), "export EDITOR=vim\n")
 
     def test_opencode_rerun_downloads_new_commit(self):
         self.assert_ok(self.opencode_only())
@@ -1662,7 +1739,7 @@ class InstallTest(Case):
                 (SUDO_Q, PASSWORD),
                 *[(WRITE_Q, "y")] * 2,
                 (WRITE_Q, "n"),
-                *[(WRITE_Q, "y")] * 2,
+                *[(WRITE_Q, "y")] * 3,
             ],
         )
         self.assert_ok(result)
@@ -1697,7 +1774,7 @@ class InstallTest(Case):
             "--clients",
             "codex,opencode",
             stdin=f"{PASSWORD}\n{KEY}\n",
-            answers=[(WRITE_Q, "y"), *PROVIDER_ANSWERS, *[(WRITE_Q, "y")] * 4],
+            answers=[(WRITE_Q, "y"), *PROVIDER_ANSWERS, *[(WRITE_Q, "y")] * 5],
         )
         self.assert_ok(result)
         data = json.loads(self.auth_json().read_text())
@@ -1823,6 +1900,7 @@ class InstallTest(Case):
                 (WRITE_Q, "y"),
                 (WRITE_Q, "y"),
                 (PEM_Q, ""),
+                (WRITE_Q, "y"),
                 (WRITE_Q, "y"),
             ],
         )
@@ -1962,7 +2040,7 @@ class InstallTest(Case):
                 "--opencode-url",
                 url,
                 stdin=KEY + "\n",
-                answers=[(SUDO_Q, PASSWORD), *([(WRITE_Q, "y")] * (5 if warned else 1))],
+                answers=[(SUDO_Q, PASSWORD), *([(WRITE_Q, "y")] * (6 if warned else 1))],
             )
             self.assert_ok(result)
             self.assertEqual("sends the API key in plaintext" in result.stderr, warned, url)
