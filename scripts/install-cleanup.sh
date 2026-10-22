@@ -495,6 +495,22 @@ def run():
         write(state / ("opencode-provider-" + name + ".json"), json.dumps(record))
         write(plan, new)
         print(path)
+    elif action == "record-plugin":
+        before, installed, spec = args
+        installed = Path(installed)
+        current, _ = parse(load(path))
+        baseline, _ = parse(Path(before).read_text(encoding="utf-8"))
+        tracked, _ = parse(load(installed)) if installed.exists() else (baseline.copy(), "")
+        plugins = current.get("plugin", [])
+        previous = tracked.get("plugin", [])
+        if not isinstance(plugins, list) or not isinstance(previous, list):
+            raise ValueError()
+        if spec in plugins:
+            prefix = spec.split("@", 1)[0] + "@"
+            tracked["plugin"] = [p for p in previous if not isinstance(p, str) or not p.startswith(prefix)] + [spec]
+        if "$schema" not in baseline and current.get("$schema") == "https://opencode.ai/config.json":
+            tracked["$schema"] = current["$schema"]
+        write(installed, json.dumps(tracked))
     elif action == "remove-provider":
         state, name = args
         if not path.exists():
@@ -522,9 +538,12 @@ def run():
         if not all(isinstance(p, list) for p in (old_plugins, installed_plugins, plugins)):
             raise ValueError()
         owned = [p for p in installed_plugins if p not in old_plugins]
-        kept = [p for p in plugins if p not in owned]
+        removed = [p for p in old_plugins if p not in installed_plugins and p not in plugins]
+        kept = removed + [p for p in plugins if p not in owned]
         if kept != plugins:
             text = edit(text, ["plugin"], kept, remove=not kept and "plugin" not in baseline)
+        if "$schema" not in baseline and "$schema" in added and current.get("$schema") == added["$schema"]:
+            text = edit(text, ["$schema"], None, remove=True)
         result, _ = parse(text)
         if result == baseline:
             if not original:

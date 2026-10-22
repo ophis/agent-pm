@@ -144,6 +144,31 @@ class OpenCodeConfigTest(Case):
         self.edit("remove-plugin", self.path, self.before, self.installed)
         self.assertFalse(self.path.exists())
 
+    def test_generated_schema_is_removed_but_later_settings_remain(self):
+        self.before.write_text("")
+        installed = {"$schema": "https://opencode.ai/config.json", "plugin": ["installed"]}
+        self.installed.write_text(json.dumps(installed))
+        self.path.write_text(json.dumps({**installed, "theme": "mine"}))
+        self.edit("remove-plugin", self.path, self.before, self.installed)
+        self.assertEqual(json.loads(self.path.read_text()), {"theme": "mine"})
+
+    def test_plugin_rerecord_does_not_claim_later_user_plugin(self):
+        self.before.write_text("")
+        self.path.write_text('{"plugin":["earlier-user","agent-pm@old"]}')
+        self.edit("record-plugin", self.path, self.before, self.installed, "agent-pm@old")
+        self.path.write_text('{"plugin":["earlier-user","user","agent-pm@new"]}')
+        self.edit("record-plugin", self.path, self.before, self.installed, "agent-pm@new")
+        self.edit("remove-plugin", self.path, self.before, self.installed)
+        self.assertEqual(json.loads(self.path.read_text()), {"plugin": ["earlier-user", "user"]})
+
+    def test_plugin_cleanup_restores_original_replaced_spec(self):
+        original = '{"plugin":["agent-pm@original"]}'
+        self.before.write_text(original)
+        self.installed.write_text('{"plugin":["agent-pm@installed"]}')
+        self.path.write_text(self.installed.read_text())
+        self.edit("remove-plugin", self.path, self.before, self.installed)
+        self.assertEqual(self.path.read_text(), original)
+
     def test_failed_atomic_cleanup_keeps_original_and_no_temp_files(self):
         self.add()
         before = self.path.read_bytes()
