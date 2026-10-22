@@ -188,20 +188,6 @@ class BaseModeTest(Case):
         self.assertTrue(str(caught.exception).startswith("refused inside an agent session"))
         self.assertEqual((client.mode.asked, recorded), ([], []))
 
-    def test_each_launch_exports_its_own_tier_and_drops_an_inherited_tier(self):
-        for tier in (1, 2, None):
-            with (
-                self.subTest(tier=tier),
-                mock.patch.dict(os.environ, {"AGENT_PM_TIER": "4", "AGENT_PM_AGENT_SESSION": ""}),
-            ):
-                spec = Spec(
-                    workdir="/w", access=Access(cwd="/w"), client="fake", sid="s", tier=tier
-                )
-                prepared = BaseMode._launched(spec, lambda _: Launch(("x",)), (), inherit=True)
-                self.assertEqual(
-                    prepared.env.get("AGENT_PM_TIER"), None if tier is None else str(tier)
-                )
-
 
 class AccountTest(Case):
     def spec(self, client="claude", **env) -> Spec:

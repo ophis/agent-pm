@@ -1,8 +1,8 @@
 """A role's run config (resolve: the core config, then the caller's overlays) and accounts table, one
 run's params and its client-neutral access intent (access), whose env is the session env its
-commands and gate need.
-An overlay can widen read, write, commands and gate, so a caller passes only operator-controlled
-config as one.
+commands need.
+An overlay can widen read, write and commands, so a caller passes only operator-controlled
+config as one. A runtime overlay may also supply the caller's gate command; config files cannot.
 """
 
 import os
@@ -39,13 +39,13 @@ RUN_KEYS = frozenset(
         "commands",
         "templates",
         "output",
-        "gate",
         "language",
         "cwd",
         "idle_timeout",
         "show",
     }
 )
+OVERLAY_KEYS = RUN_KEYS | {"gate"}
 ACCOUNTS_KEY = "accounts"
 OUTPUT_KEYS = frozenset({"type", "repo", "branch", "dir", "host"})
 OLD_KEYS = frozenset({"default_task", "tasks"})
@@ -102,7 +102,7 @@ def resolve(
         **values,
     )
     for overlay in overlays:
-        run = replace(run, **_run_keys(overlay, role))
+        run = replace(run, **_run_keys(overlay, role, OVERLAY_KEYS))
     if not (found := charter(team, role)):
         raise no_charter(role, cfg, team)
     tasks = index(role, team, config, local, cfg=cfg)
@@ -238,6 +238,8 @@ def approved(
 
 
 def _check(cfg: Mapping) -> None:
+    if "gate" in cfg:
+        raise ConfigError("unknown key 'gate'")
     for key in cfg:
         if hint := utils.renamed_key(key):
             raise ConfigError(f"unknown key {key!r}{hint}")
@@ -251,7 +253,7 @@ def _check_overlay(overlay: Mapping, roles: set[str], where: str) -> None:
     """An overlay's errors name its tables in brackets."""
     if not isinstance(overlay, Mapping):
         raise ConfigError(f"[{where}] must be a table")
-    _check_keys(overlay, RUN_KEYS | {"roles", ACCOUNTS_KEY}, f"[{where}]")
+    _check_keys(overlay, OVERLAY_KEYS | {"roles", ACCOUNTS_KEY}, f"[{where}]")
     _check_output(overlay, f"{where}.output", _boxed)
     _accounts(overlay, f"{where}.")
     if "roles" not in overlay:
@@ -263,16 +265,18 @@ def _check_overlay(overlay: Mapping, roles: set[str], where: str) -> None:
             raise ConfigError(f"unknown role {role!r} in [{where}.roles]")
         if not isinstance(table, Mapping):
             raise ConfigError(f"[{where}.roles.{role}] must be a table")
-        _check_role(table, role, f"{where}.", _boxed)
+        _check_role(table, role, f"{where}.", _boxed, OVERLAY_KEYS)
 
 
 def _boxed(where: str) -> str:
     return f"[{where}]"
 
 
-def _check_role(table: Mapping, role: str, prefix: str, shown: Callable[[str], str]) -> None:
+def _check_role(
+    table: Mapping, role: str, prefix: str, shown: Callable[[str], str], keys: frozenset = RUN_KEYS
+) -> None:
     check_old_keys(table, role, prefix)
-    _check_keys(table, RUN_KEYS | {ACCOUNTS_KEY}, shown(f"{prefix}roles.{role}"))
+    _check_keys(table, keys | {ACCOUNTS_KEY}, shown(f"{prefix}roles.{role}"))
     _check_output(table, f"{prefix}roles.{role}.output", shown)
     _accounts(table, f"{prefix}roles.{role}.")
 
@@ -303,9 +307,9 @@ def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
         raise ConfigError(f"unknown key {extra[0]!r} in {where}{utils.renamed_key(extra[0])}")
 
 
-def _run_keys(layer: Mapping, role: str) -> dict:
+def _run_keys(layer: Mapping, role: str, keys: frozenset = RUN_KEYS) -> dict:
     """A layer's run keys for `role`; an [output] key "" is unset."""
-    values = {k: v for k in RUN_KEYS if (v := run_key(layer, role, k)) is not None}
+    values = {k: v for k in keys if (v := run_key(layer, role, k)) is not None}
     if isinstance(output := values.get("output"), Mapping):
         values["output"] = {k: v for k, v in output.items() if v != ""}
     return values

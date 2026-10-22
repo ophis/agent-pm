@@ -44,6 +44,13 @@ class LinearRun:
         self.issue, self.sid = issue, sid
         self.delegate_kind = delegate_kind or cfg.delegate_kind
         provider = delegate_cls or self.kind_cls(cfg, self.delegate_kind)
+        overlays = (cfg.core,)
+        if tier is not None:
+            overlays += ({"roles": {role: {"tier": tier}}},)
+        if role == "researcher":
+            overlays += (
+                {"roles": {role: {"gate": "agent-pm-orchestrator router --brake researcher"}}},
+            )
         self.delegate: Delegate = provider.create(
             role,
             Spec(
@@ -59,7 +66,7 @@ class LinearRun:
             ),
             display=display,
             callback=["agent-pm-orchestrator", "writeback", "--issue", issue, "--workdir", workdir],
-            overlays=(cfg.core,) if tier is None else (cfg.core, {"roles": {role: {"tier": tier}}}),
+            overlays=overlays,
         )
 
     @staticmethod

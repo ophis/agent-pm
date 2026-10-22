@@ -125,7 +125,7 @@ PYTHON_CODE_ALLOWED = {
     ): "Import-time globals and file opens of agent_pm.orchestrator.engine.config (no public re-export) observed in a fresh interpreter.",
     (
         "orchestrator/tests/orchestrator_tests/integration/config_isolation_integration_test.py",
-        "cb62981be5b0d5a55a5cfa67837751c7f47c06cdce91be9040a86171ef092469",
+        "151bd1279dda4cbd4682f43d90cde85adc1eed718b53c599384695e228e4ac91",
     ): "engine.config.load() in a copied-package deployment interpreter; no public loader, and CLI commands that load config go on to call Linear.",
     (
         "orchestrator/tests/orchestrator_tests/integration/linear_run_extension_integration_test.py",

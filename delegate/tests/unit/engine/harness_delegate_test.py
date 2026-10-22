@@ -57,6 +57,38 @@ ORPHAN = 4242
 
 
 class CreateTest(HarnessCase):
+    def test_resumed_run_keeps_the_owners_brake(self):
+        command = "owner-brake researcher"
+        record = self.make(
+            role="researcher",
+            spec=Spec("input", self.work, client="fake", sid=SID),
+            overlays=({"roles": {"researcher": {"gate": command}}},),
+        ).detach()
+        self.stop(record)
+        resumed = HarnessDelegate.attach(self.work, session_cls=HarnessSession).resume()
+        self.assertEqual(self.metadata()["plan"]["run"]["gate"], command)
+        self.assertIn(command, self.metadata()["plan"]["session"]["access"]["commands"])
+        self.stop(resumed)
+
+    def test_only_the_owners_overlay_sets_a_brake_regardless_of_callback(self):
+        command = "owner-brake researcher"
+        for callback in (None, (), ("owner",), ("owner", "writeback")):
+            for expected in ("", command):
+                with self.subTest(callback=callback, gate=expected):
+                    preview = HarnessDelegate.preview(
+                        "researcher",
+                        Spec("input", self.work, client="fake", sid=SID),
+                        callback=callback,
+                        overlays=({"roles": {"researcher": {"gate": expected}}},),
+                        session_cls=HarnessSession,
+                    )
+                    self.assertEqual(preview.plan.run.gate, expected)
+                    self.assertEqual(
+                        expected in preview.plan.session.access.commands, bool(expected)
+                    )
+                    if expected:
+                        self.assertIn(f"`{expected}`", preview.plan.session.prompt)
+
     def test_create_persists_placement_with_overlays(self):
         class Bound(HarnessDelegate):
             def __init__(self, role, spec, **placement):
