@@ -288,7 +288,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. With `tracker = "lin
 | `config.local.toml` | never: your settings |
 | `work/<ID>/agent/` | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
 | `work/<ID>/run/` | once you won't attach or resume the run; by hand where prune never reaches: the run's delegate kind is no longer configured, or the issue was deleted in Linear |
-| `work/<ID>/writeback.json`, `writeback.lock` | once the issue's run won't resume or be recovered: Recover replays a write-back missing from the ledger; where prune never reaches: as `work/<ID>/run/` |
+| `work/<ID>/writeback.json`, `writeback.lock` | once the issue will never build again, resume or be recovered: deleting the ledger loses its delivered-comment boundary, and Recover replays missing write-back; where prune never reaches: as `work/<ID>/run/` |
 | `logs/runs.jsonl` | never ([Operating](#operating)) |
 | `logs/orchestrator.jsonl`, `.1`, `.lock` | any time; keep `logs/` ([Setup](#setup) step 4) |
 | `logs/prune.json` | any time: the next tick reads Linear again |
