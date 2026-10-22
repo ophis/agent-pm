@@ -145,7 +145,7 @@ def plan(
         cwd=here,
         project=project,
         reads=intent.reads,
-        env=intent.env | ({HOST_CALL_ENV: intent.gate} if docker and intent.gate else {}),
+        env=dict(intent.env) | ({HOST_CALL_ENV: intent.gate} if docker and intent.gate else {}),
     )
     flags, env = driver.policy(client)
     if docker:

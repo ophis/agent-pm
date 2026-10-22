@@ -5,12 +5,13 @@ import io
 import json
 import os
 import stat
-import subprocess
+from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.session.hosts.docker import call
 
 from session.tests.case import Case
+from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 GEN = "0123456789abcdef0123456789abcdef"
 CONFIG = {
@@ -34,11 +35,11 @@ class CommandTest(Case):
             self.assertEqual(argv, CONFIG["argv"])
             self.assertEqual(kwargs["cwd"], "/")
             self.assertEqual(kwargs["timeout"], 150)
-            self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
+            self.assertEqual(kwargs["stderr"], DEVNULL)
             self.assertEqual(kwargs["env"]["KEEP"], "host")
             self.assertEqual(kwargs["env"]["AGENT_PM_CLIENT"], "client")
             kwargs["stdout"].write(b"usage is clear\n")
-            return subprocess.CompletedProcess(argv, 0)
+            return SimpleNamespace(returncode=0)
 
         with mock.patch.dict(os.environ, {"KEEP": "host", "AGENT_PM_CLIENT": "old"}):
             self.assertEqual(
@@ -50,16 +51,16 @@ class CommandTest(Case):
         for status, expected in ((1, 1), (80, 80), (-15, 143)):
             with self.subTest(status=status):
 
-                def run(argv, status=status, **kwargs):
+                def run(_argv, status=status, **kwargs):
                     kwargs["stdout"].write(b"stop\n")
-                    return subprocess.CompletedProcess(argv, status)
+                    return SimpleNamespace(returncode=status)
 
                 self.assertEqual(
                     call.execute(CONFIG, run=run), {"returncode": expected, "stdout": "stop\n"}
                 )
 
     def test_command_failures_are_fixed_and_never_include_exception_text(self):
-        for error in (FileNotFoundError("host-secret"), subprocess.TimeoutExpired("secret", 150)):
+        for error in (FileNotFoundError("host-secret"), TimeoutExpired("secret", 150)):
             with self.subTest(error=type(error).__name__):
                 result = call.execute(CONFIG, run=mock.Mock(side_effect=error))
                 self.assertEqual(result["returncode"], 2)
@@ -69,9 +70,9 @@ class CommandTest(Case):
         for output in (b"x" * (call.OUTPUT_MAX + 1), b"\xff"):
             with self.subTest(length=len(output)):
 
-                def run(argv, output=output, **kwargs):
+                def run(_argv, output=output, **kwargs):
                     kwargs["stdout"].write(output)
-                    return subprocess.CompletedProcess(argv, 0)
+                    return SimpleNamespace(returncode=0)
 
                 self.assertEqual(call.execute(CONFIG, run=run), call.failed())
 
@@ -195,9 +196,9 @@ class TransportTest(Case):
         process.poll.return_value = None
         destination = io.BytesIO()
 
-        def run(argv, **kwargs):
+        def run(_argv, **kwargs):
             kwargs["stdout"].write(b"stop")
-            return subprocess.CompletedProcess(argv, 80)
+            return SimpleNamespace(returncode=80)
 
         invoke = mock.Mock(side_effect=run)
         popen = mock.Mock(return_value=process)
@@ -208,7 +209,7 @@ class TransportTest(Case):
             mock.patch.object(
                 call.select, "select", side_effect=lambda readers, *_: (readers, [], [])
             ),
-            mock.patch.object(call.subprocess, "run", invoke),
+            mock.patch("subprocess.run", invoke),
         ):
             self.assertEqual(
                 call.host(
@@ -218,9 +219,9 @@ class TransportTest(Case):
             )
         popen.assert_called_once_with(
             ["/bin/connector", "serve", GEN],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stdin=PIPE,
+            stdout=PIPE,
+            stderr=DEVNULL,
         )
         self.assertEqual(json.loads(destination.getvalue()), ready())
         self.assertEqual(invoke.call_count, 1)
@@ -387,7 +388,7 @@ class TransportTest(Case):
     def test_stop_kills_and_reaps_a_connector_that_ignores_termination(self):
         process = mock.Mock()
         process.poll.return_value = None
-        process.wait.side_effect = [subprocess.TimeoutExpired("fixed", 5), 0]
+        process.wait.side_effect = [TimeoutExpired("fixed", 5), 0]
         call._stop(process)
         process.terminate.assert_called_once()
         process.kill.assert_called_once()
