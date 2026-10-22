@@ -1,0 +1,19 @@
+# CI workflows, gates, runners and this ownership policy.
+/.github/** @ophis
+
+# Lint, types, import contracts, dead code, spelling and scan exclusions.
+/pyproject.toml @ophis
+/.gitignore @ophis
+/.githooks/** @ophis
+
+# Repository check discovery, policy, exceptions and test isolation.
+/tests/*.py @ophis
+/tests/guard_checks/** @ophis
+/tests/guard_data/** @ophis
+/utils/tests/sandbox.py @ophis
+
+# Go check dependencies, execution environment and CI build entry.
+/broker/go.mod @ophis
+/broker/go.sum @ophis
+/broker/with-go-state.sh @ophis
+/broker/build.sh @ophis
