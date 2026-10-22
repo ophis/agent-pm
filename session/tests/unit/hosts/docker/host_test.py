@@ -2446,18 +2446,13 @@ class ReclaimTest(Base):
             self.host._spawn_reclaim()
         self.assertIn("docker reclaim: cannot spawn", logs.output[0])
 
-    def test_the_background_entrypoint_runs_the_pass_with_fake_tools(self):
+    def test_the_background_entrypoint_skips_without_a_daemon(self):
         module = sys.modules[DockerHost.__module__]
-        with (
-            mock.patch("sys.argv", [module.__file__, DOCKER]),
-            mock.patch("agent_pm.session.hosts.docker.daemon.capped", self.docker),
-            mock.patch(
-                "agent_pm.session.hosts.docker.broker.Broker.workspace_rm",
-                side_effect=self.broker.workspace_rm,
-            ),
-        ):
+        os.unlink(self.ep.removeprefix("unix://"))
+        with mock.patch("sys.argv", [module.__file__, DOCKER]):
             runpy.run_path(module.__file__, run_name="__main__")
-        self.assertEqual(self.removed(), [self.GONE])
+        self.assertEqual(self.order, [])
+        self.spawn_mock.assert_not_called()
 
     def test_a_piped_close_schedules_reclaim_after_closing_the_container(self):
         def spawn():
