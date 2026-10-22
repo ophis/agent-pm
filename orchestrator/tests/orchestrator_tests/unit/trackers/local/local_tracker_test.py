@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
+from agent_pm.orchestrator.engine import inputs
 from agent_pm.orchestrator.engine.flow.handoff import handoff, parse_handoff
 from agent_pm.orchestrator.engine.flow.types import (
     Approved,
@@ -29,7 +30,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Snapshot,
     SubIssue,
 )
-from agent_pm.orchestrator.engine.types import IssueError, TrackerFileError
+from agent_pm.orchestrator.engine.types import Docs, IssueError, Target, TrackerFileError
 from agent_pm.orchestrator.trackers.local.local_tracker import ISSUE_STATES, LocalTracker
 from agent_pm.orchestrator.trackers.local.types import LocalState
 from orchestrator_tests.case import Case
@@ -561,8 +562,37 @@ class Reads(Board):
 
 
 NOW = datetime(2026, 10, 20, 9, 30, tzinfo=UTC)
-STAMPED = "- 2026-10-20 00:00 {} other\n"
-WROTE = "- 2026-10-20 09:30 {} self\n"
+STAMPED = "- 2026-10-20 00:00:00.000 {} other\n"
+WROTE = "- 2026-10-20 09:30:00.000 {} self\n"
+
+
+class ResumeInputs(Board):
+    def test_local_interrupted_timeline_renders_the_pre_start_comment_as_a_requirement(self):
+        self.write(
+            "engineer/running",
+            "LOC-1",
+            comments=(
+                "#### self · 2026-10-22 08:44:16.000\nRun sid · running\n\n"
+                "#### other · 2026-10-22 08:44:37.000\nAdd another line.\n\n"
+                "#### self · 2026-10-22 08:44:37.900\nBuild started: first build\n\n"
+                "#### self · 2026-10-22 08:44:38.000\nRun sid · interrupted\n"
+            ),
+        )
+        issue = self.tracker.issue("LOC-1")
+        self.assertEqual(
+            [n.at for n in issue.notes],
+            [f"2026-10-22T08:44:{s}Z" for s in ("16.000", "37.000", "37.900", "38.000")],
+        )
+        text = inputs.render(
+            issue,
+            "engineer",
+            inputs.Sources((), None),
+            target=Target("o", "r", "b"),
+            docs=Docs("o/docs", "main", {"pm": "Product Design/"}),
+        )
+        requirements, earlier = text.split("## Earlier comments", 1)
+        self.assertIn("other, 2026-10-22T08:44:37.000Z:\nAdd another line.", requirements)
+        self.assertNotIn("Add another line.", earlier)
 
 
 class Written(Board):
@@ -642,7 +672,7 @@ class Writes(Written):
             self.read(os.path.join(self.board, "pm/review/LOC-1 x.md")),
             text(
                 "LOC-1",
-                comments="\n#### self · 2026-10-20 09:30\nStopped.\n\n",
+                comments="\n#### self · 2026-10-20 09:30:00.000\nStopped.\n\n",
                 history="- 2026-10-19 14:30 running self\n" + WROTE.format("review"),
             ),
         )
@@ -651,7 +681,7 @@ class Writes(Written):
         path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
         self.tracker.comment("LOC-1", "Started.", ("sid", "start"))
         self.assertIn(
-            "### Comments\n\n#### self · 2026-10-20 09:30 <!-- id=c1 key=sid:start -->\nStarted.\n",
+            "### Comments\n\n#### self · 2026-10-20 09:30:00.000 <!-- id=c1 key=sid:start -->\nStarted.\n",
             self.read(path),
         )
         self.assertEqual(self.tracker.find_comment("LOC-1", ("sid", "start")), "Started.")
@@ -668,7 +698,7 @@ class Writes(Written):
     def test_comment_without_ref(self):
         path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
         self.tracker.comment("LOC-1", "Note.")
-        self.assertIn("\n#### self · 2026-10-20 09:30\nNote.\n", self.read(path))
+        self.assertIn("\n#### self · 2026-10-20 09:30:00.000\nNote.\n", self.read(path))
         self.assertEqual(
             [(c.body, c.origin) for c in self.tracker.detail("LOC-1").comments], [("Note.", "self")]
         )
@@ -708,7 +738,7 @@ class Writes(Written):
             self.read(path),
             text(
                 "LOC-1",
-                comments="\n#### other · 2026-10-20 00:00\nplease redo\n\n#### self · 2026-10-20 09:30\nSeen.\n",
+                comments="\n#### other · 2026-10-20 00:00:00.000\nplease redo\n\n#### self · 2026-10-20 09:30:00.000\nSeen.\n",
                 history="- 2026-10-19 14:30 running self\n" + STAMPED.format("review"),
             ),
         )
@@ -1073,7 +1103,7 @@ class Stamped(Written):
         before = self.tracker.detail("LOC-1")
         self.assertEqual(
             (before.moves[-1].at, before.comments[0].at),
-            ("2026-10-20T00:00:00.000Z", "2026-10-20T00:00:00.000Z"),
+            ("2026-10-20T00:00:27.500Z", "2026-10-20T00:00:27.500Z"),
         )
         self.tracker.relate("LOC-1", "LOC-2")
         after = LocalTracker(self.board, ("pm", "engineer"), prefix="LOC").detail("LOC-1")
@@ -1167,7 +1197,7 @@ class Archive(Written):
             text(
                 "LOC-2",
                 front="parent: LOC-1\n",
-                comments="\n#### self · 2026-10-20 09:30 <!-- id=c1 key=archived:engineer -->\n"
+                comments="\n#### self · 2026-10-20 09:30:00.000 <!-- id=c1 key=archived:engineer -->\n"
                 "Archived from engineer/canceled/.\n\n",
                 history=STAMPED.format("canceled"),
             ),

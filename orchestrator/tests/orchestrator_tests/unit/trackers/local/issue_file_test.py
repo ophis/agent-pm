@@ -297,33 +297,71 @@ class Parse(Zoned):
 class Edits(Zoned):
     """The text edits a write applies: each keeps every other line and parses back."""
 
+    def test_same_minute_timeline_keeps_seconds_and_milliseconds(self):
+        begun = at(8, 44).replace(second=16)
+        comment = begun.replace(second=37)
+        started = comment.replace(microsecond=900000)
+        closed = begun.replace(second=38)
+        text = issue_file.new(
+            ident="LOC-12",
+            title="x",
+            priority=0,
+            created=begun,
+            parent=None,
+            description="D",
+            state=LocalState.RUNNING,
+            note="Run sid · running",
+        )
+        text = issue_file.add_comment(
+            text, at=comment, body="Add another line.", source=Source.OTHER
+        )
+        text = issue_file.add_comment(text, at=started, body="Build started: first build")
+        text = issue_file.add_comment(text, at=closed, body="Run sid · interrupted")
+        text = issue_file.add_history(text, at=closed, state=LocalState.REVIEW)
+        found = parse(text)
+        self.assertEqual([n.at for n in found.comments], [begun, comment, started, closed])
+        self.assertEqual([e.at for e in found.history], [begun, closed])
+        for stamp in ("08:44:16.000", "08:44:37.000", "08:44:37.900", "08:44:38.000"):
+            self.assertIn(stamp, text)
+
+    def test_stamp_preserves_subsecond_mtime_for_bare_comments_and_moves(self):
+        mtime = at(8, 44).replace(second=37, microsecond=900123)
+        text = FRONT + "### Comments\n###\nAdd another line.\n"
+        stamped = issue_file.stamp(text, mtime=mtime, state=LocalState.RUNNING)
+        found = parse(stamped)
+        self.assertEqual(found.comments[0].at, mtime.replace(microsecond=900000))
+        self.assertEqual(found.history[0].at, found.comments[0].at)
+        self.assertIn("08:44:37.900", stamped)
+
     def test_stamp_bare_comment(self):
         text = FRONT + "### Comments\n###\nmine\n"
         stamped = issue_file.stamp(text, mtime=at(9, 30), state=None)
-        self.assertEqual(stamped, FRONT + "### Comments\n#### other · 2026-10-19 09:30\nmine\n")
+        self.assertEqual(
+            stamped, FRONT + "### Comments\n#### other · 2026-10-19 09:30:00.000\nmine\n"
+        )
         self.assertEqual(parse(stamped).comments, (Note(at(9, 30), Source.OTHER, "mine", None),))
 
     def test_stamp_directory_move(self):
-        text = FRONT + "### History\n- 2026-10-19 09:00 running self\n"
+        text = FRONT + "### History\n- 2026-10-19 09:00:00.000 running self\n"
         moved = issue_file.stamp(text, mtime=at(9, 30), state=LocalState.REVIEW)
-        self.assertEqual(moved, text + "- 2026-10-19 09:30 review other\n")
+        self.assertEqual(moved, text + "- 2026-10-19 09:30:00.000 review other\n")
         self.assertEqual(issue_file.stamp(text, mtime=at(9, 30), state=LocalState.RUNNING), text)
         self.assertEqual(
             issue_file.stamp(FRONT, mtime=at(9, 30), state=LocalState.READY),
-            FRONT + "### History\n- 2026-10-19 09:30 ready other\n",
+            FRONT + "### History\n- 2026-10-19 09:30:00.000 ready other\n",
         )
         self.assertEqual(issue_file.stamp(FRONT, mtime=at(9, 30), state=None), FRONT)
 
     def test_add_comment(self):
-        text = FRONT + "### Description\nd\n### History\n- 2026-10-19 09:00 ready other\n"
+        text = FRONT + "### Description\nd\n### History\n- 2026-10-19 09:00:00.000 ready other\n"
         once = issue_file.add_comment(text, at=at(9, 5), body="first", ref_key="s:start")
         twice = issue_file.add_comment(once, at=at(9, 6), body="plain")
         self.assertEqual(
             twice,
             FRONT + "### Description\nd\n### Comments\n\n"
-            "#### self · 2026-10-19 09:05 <!-- id=c1 key=s:start -->\nfirst\n\n"
-            "#### self · 2026-10-19 09:06\nplain\n\n"
-            "### History\n- 2026-10-19 09:00 ready other\n",
+            "#### self · 2026-10-19 09:05:00.000 <!-- id=c1 key=s:start -->\nfirst\n\n"
+            "#### self · 2026-10-19 09:06:00.000\nplain\n\n"
+            "### History\n- 2026-10-19 09:00:00.000 ready other\n",
         )
         third = issue_file.add_comment(twice, at=at(9, 7), body="x", ref_key="s:next")
         self.assertIn("<!-- id=c2 key=s:next -->", third)
@@ -360,22 +398,27 @@ class Edits(Zoned):
         )
         self.assertEqual([n.body for n in parse(edited).comments], ["new\n ### History", "after"])
         self.assertIsNone(issue_file.edit_comment(text, "s:none", "x"))
-        other = FRONT + "### Comments\n#### other · 2026-10-19 09:00 <!-- id=c1 key=s:o -->\nx\n"
+        other = (
+            FRONT + "### Comments\n#### other · 2026-10-19 09:00:00.000 <!-- id=c1 key=s:o -->\nx\n"
+        )
         self.assertIsNone(issue_file.edit_comment(other, "s:o", "y"))
 
     def test_stamp_converges_after_a_future_dated_line(self):
         text = FRONT + "### History\n- 2099-01-01 00:00 ready other\n"
         stamped = issue_file.stamp(text, mtime=at(9, 30), state=LocalState.RUNNING)
-        self.assertEqual(stamped, text + "- 2026-10-19 09:30 running other\n")
+        self.assertEqual(stamped, text + "- 2026-10-19 09:30:00.000 running other\n")
         moved = issue_file.add_history(stamped, at=at(9, 35), state=LocalState.REVIEW)
         self.assertEqual(issue_file.stamp(moved, mtime=at(9, 40), state=LocalState.REVIEW), moved)
 
     def test_edit_comment_keeps_the_layout(self):
-        last = FRONT + "### Comments\n#### self · 2026-10-19 09:00 <!-- id=c1 key=s:a -->\nold\n"
+        last = (
+            FRONT
+            + "### Comments\n#### self · 2026-10-19 09:00:00.000 <!-- id=c1 key=s:a -->\nold\n"
+        )
         self.assertEqual(
             issue_file.edit_comment(last, "s:a", "new body"), last.replace("old", "new body")
         )
-        tight = last + "### History\n- 2026-10-19 09:00 running self\n"
+        tight = last + "### History\n- 2026-10-19 09:00:00.000 running self\n"
         self.assertEqual(issue_file.edit_comment(tight, "s:a", "new"), tight.replace("old", "new"))
         spaced = last.replace("old\n", "old\n\n\n") + "### History\n"
         self.assertEqual(
@@ -385,11 +428,11 @@ class Edits(Zoned):
         self.assertEqual(issue_file.edit_comment(empty, "s:a", "x"), empty + "x\n")
 
     def test_add_history(self):
-        text = FRONT + "### History\n- 2026-10-19 09:00 ready other\n\n"
+        text = FRONT + "### History\n- 2026-10-19 09:00:00.000 ready other\n\n"
         self.assertEqual(
             issue_file.add_history(text, at=at(9, 5), state=LocalState.RUNNING),
             FRONT
-            + "### History\n- 2026-10-19 09:00 ready other\n- 2026-10-19 09:05 running self\n\n",
+            + "### History\n- 2026-10-19 09:00:00.000 ready other\n- 2026-10-19 09:05:00.000 running self\n\n",
         )
 
     def test_set_title(self):
@@ -417,7 +460,9 @@ class Edits(Zoned):
         self.assertEqual([(n.key, n.body) for n in parse(dropped).comments], [("s:b", "b")])
         self.assertEqual(issue_file.drop_comment(dropped, "s:b"), FRONT + "### Comments\n\n")
         self.assertIsNone(issue_file.drop_comment(text, "s:none"))
-        other = FRONT + "### Comments\n#### other · 2026-10-19 09:00 <!-- id=c1 key=s:o -->\nx\n"
+        other = (
+            FRONT + "### Comments\n#### other · 2026-10-19 09:00:00.000 <!-- id=c1 key=s:o -->\nx\n"
+        )
         self.assertIsNone(issue_file.drop_comment(other, "s:o"))
 
     def test_add_related(self):
@@ -434,13 +479,15 @@ class Edits(Zoned):
 
     def test_add_comment_as_other(self):
         text = issue_file.add_comment(FRONT, at=at(9, 5), body="mine", source=Source.OTHER)
-        self.assertEqual(text, FRONT + "### Comments\n\n#### other · 2026-10-19 09:05\nmine\n")
+        self.assertEqual(
+            text, FRONT + "### Comments\n\n#### other · 2026-10-19 09:05:00.000\nmine\n"
+        )
         self.assertEqual(parse(text).comments, (Note(at(9, 5), Source.OTHER, "mine", None),))
 
     def test_set_description_replaces_the_body(self):
         text = (
             FRONT
-            + "\n### Description\n\nold\n\nlines\n\n### History\n- 2026-10-19 09:00 ready other\n"
+            + "\n### Description\n\nold\n\nlines\n\n### History\n- 2026-10-19 09:00:00.000 ready other\n"
         )
         edited = issue_file.set_description(text, "new\n### History\nend")
         self.assertEqual(edited, text.replace("old\n\nlines", "new\n ### History\nend"))
@@ -457,7 +504,7 @@ class Edits(Zoned):
         )
 
     def test_set_description_makes_the_section(self):
-        history = "### History\n- 2026-10-19 09:00 ready other\n"
+        history = "### History\n- 2026-10-19 09:00:00.000 ready other\n"
         made = issue_file.set_description(FRONT + history, "d\ne")
         self.assertEqual(made, FRONT + "### Description\nd\ne\n" + history)
         self.assertEqual(parse(made).description, "d\ne")
@@ -581,9 +628,9 @@ class New(Zoned):
             "created: 2026-10-19T09:30:00-03:00\nparent: LOC-5\n---\n\n"
             "### Description\nHandoff from LOC-1: file:///b\n\nBuild it.\n\n"
             "### Comments\n\n"
-            "#### self · 2026-10-19 09:30 <!-- id=c1 key=LOC-1:engineer:2026-10-19T12:00:00.000Z -->\n"
+            "#### self · 2026-10-19 09:30:00.000 <!-- id=c1 key=LOC-1:engineer:2026-10-19T12:00:00.000Z -->\n"
             "Created by promote.\n\n"
-            "### History\n- 2026-10-19 09:30 ready self\n",
+            "### History\n- 2026-10-19 09:30:00.000 ready self\n",
         )
 
     def test_without_a_note(self):
@@ -600,7 +647,7 @@ class New(Zoned):
         self.assertEqual(
             text,
             '---\nid: LOC-12\ntitle: "x"\npriority: 0\ncreated: 2026-10-19T09:30:00-03:00\n---\n\n'
-            "### Description\nd\n\n### History\n- 2026-10-19 09:30 backlog other\n",
+            "### Description\nd\n\n### History\n- 2026-10-19 09:30:00.000 backlog other\n",
         )
         found = parse(text)
         self.assertEqual((found.description, found.comments), ("d", ()))

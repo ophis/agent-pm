@@ -395,7 +395,7 @@ class Create(Board):
         self.assertEqual(
             self.read(path),
             '---\nid: LOC-4\ntitle: "A: b/c"\npriority: 0\ncreated: 2026-10-20T09:30:00+00:00\n'
-            "---\n\n### Description\nBody\n\n### History\n- 2026-10-20 09:30 backlog other\n",
+            "---\n\n### Description\nBody\n\n### History\n- 2026-10-20 09:30:00.000 backlog other\n",
         )
 
     def test_fields_and_blocks(self):
@@ -419,7 +419,7 @@ class Create(Board):
             self.read(path),
             '---\nid: LOC-4\ntitle: "T"\ntask: "light-build"\nclient: "ac\\"me"\npriority: 2\n'
             "created: 2026-10-20T09:30:00+00:00\nblocked_by: [LOC-2]\nparent: LOC-1\n---\n\n"
-            "### Description\nBody\n\n### History\n- 2026-10-20 09:30 ready other\n",
+            "### Description\nBody\n\n### History\n- 2026-10-20 09:30:00.000 ready other\n",
         )
         self.assertEqual(
             self.read(self.blocked),
@@ -560,7 +560,8 @@ class Move(Board):
         self.assertEqual(got, self.receipt("LOC-1", path, "move", "changed"))
         self.assertFalse(os.path.exists(old))
         self.assertEqual(
-            self.read(path), text("LOC-1", history=READY + "- 2026-10-20 09:30 review other\n")
+            self.read(path),
+            text("LOC-1", history=READY + "- 2026-10-20 09:30:00.000 review other\n"),
         )
 
     def test_already_there(self):
@@ -586,7 +587,7 @@ class CommentOn(Board):
         self.assertEqual(
             got, self.receipt("LOC-1", path, "comment", "changed", comment_id="LOC-1#2")
         )
-        self.assertIn("#### other · 2026-10-20 09:30\nHello\n", self.read(path))
+        self.assertIn("#### other · 2026-10-20 09:30:00.000\nHello\n", self.read(path))
         latest = issues.view("LOC-1", full=False)["comments"][0]
         self.assertEqual((latest["id"], latest["body"]), ("LOC-1#2", "Hello"))
         self.assertEqual(latest["author"], ACTOR)
@@ -597,7 +598,7 @@ class CommentOn(Board):
         self.assertEqual(
             got, self.receipt("LOC-1", path, "comment", "changed", comment_id="LOC-1#1")
         )
-        self.assertIn("#### other · 2026-10-20 09:30\nHello\n", self.read(path))
+        self.assertIn("#### other · 2026-10-20 09:30:00.000\nHello\n", self.read(path))
 
 
 class Relation(Board):

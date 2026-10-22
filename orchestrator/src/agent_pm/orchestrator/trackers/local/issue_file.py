@@ -48,7 +48,7 @@ _FRONT = re.compile(r"([a-z_]+):(.*)")
 _LINK_TITLE = re.compile(r"  - title:(.*)")
 _LINK_URL = re.compile(r"    url:(.*)")
 _SECTION = re.compile(r"#{3} (Description|Comments|History)")
-_TIME = r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2})"
+_TIME = r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?)"
 _SOURCE = "(" + "|".join(Source) + ")"
 _HEADER = re.compile(rf"#{{4}} {_SOURCE} · {_TIME}(?: <!-- id=\S+ key=(\S+) -->)?")
 _HEADED = re.compile(rf"#{{4}} {_SOURCE} · ")  # header-shaped; other #### lines are body text
@@ -230,15 +230,15 @@ def _sections(lines):
 
 
 def _local(text):
-    """`YYYY-MM-DD HH:MM` in the reading process's zone."""
-    return datetime.strptime(text, "%Y-%m-%d %H:%M").astimezone()
+    """A local ISO date and time in the reading process's zone."""
+    return datetime.fromisoformat(text).astimezone()
 
 
 def _comments(lines, mtime):
     notes = []
     for line in lines:
         if line == _BARE:
-            notes.append([minute(mtime), Source.OTHER, [], None])
+            notes.append([stamp_time(mtime), Source.OTHER, [], None])
         elif _HEADED.match(line) or (not notes and line.strip()):
             header = _HEADER.fullmatch(line)
             try:
@@ -279,7 +279,7 @@ def stamp(text: str, *, mtime: datetime, state: LocalState | None) -> str:
     spans = _spans(lines, end)
     for i in range(*spans.get(_Section.COMMENTS, (0, 0))):
         if lines[i] == _BARE:
-            lines[i] = f"#### {Source.OTHER} · {_minute(mtime)}"
+            lines[i] = f"#### {Source.OTHER} · {_time(mtime)}"
     text = _join(lines)
     if state is None:
         return text
@@ -301,7 +301,7 @@ def add_comment(
 
 
 def _header(source, at, ref_key, n):
-    header = f"#### {source} · {_minute(at)}"
+    header = f"#### {source} · {_time(at)}"
     return header if ref_key is None else f"{header} <!-- id=c{n} key={ref_key} -->"
 
 
@@ -340,7 +340,7 @@ def _comment(lines, end, ref_key):
 
 def add_history(text: str, *, at: datetime, state: LocalState, source: Source = Source.SELF) -> str:
     lines, end = _split(text)
-    return _join(_append(lines, end, _Section.HISTORY, [f"- {_minute(at)} {state} {source}"]))
+    return _join(_append(lines, end, _Section.HISTORY, [f"- {_time(at)} {state} {source}"]))
 
 
 def set_title(text: str, title: str) -> str:
@@ -441,7 +441,7 @@ def new(
             *comments,
             "",
             f"### {_Section.HISTORY.value}",
-            f"- {_minute(at)} {state} {source}",
+            f"- {_time(at)} {state} {source}",
         ]
     )
 
@@ -459,13 +459,13 @@ def add_link(text: str, *, title: str, url: str) -> str:
 _ID = re.compile(r"^#{4} .* <!-- id=c(\d+) key=\S+ -->$")
 
 
-def minute(at: datetime) -> datetime:
+def stamp_time(at: datetime) -> datetime:
     """at as a stamp records it: through its History text."""
-    return _local(_minute(at))
+    return _local(_time(at))
 
 
-def _minute(at):
-    return at.astimezone().strftime("%Y-%m-%d %H:%M")
+def _time(at):
+    return at.astimezone().replace(tzinfo=None).isoformat(sep=" ", timespec="milliseconds")
 
 
 def _split(text):
