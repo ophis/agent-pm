@@ -3,10 +3,13 @@
 import json
 import os
 import re
+from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from agent_pm import delegate
-from agent_pm.orchestrator.engine import config, inputs, target
+from agent_pm.orchestrator.engine import config, inputs, target, writeback
 from agent_pm.orchestrator.engine.flow import handoff
 from agent_pm.orchestrator.engine.flow.types import (
     Found,
@@ -130,7 +133,194 @@ class Gh:
         return self.table[argv[-1]]
 
 
+class LocalDocuments(Case):
+    def setUp(self):
+        self.root = Path(self.home) / "documents with spaces"
+        self.design = self.root / "pm"
+        self.research = self.root / "researcher"
+        self.design.mkdir(parents=True)
+        self.research.mkdir()
+        self.docs = config.Docs("", "", {"pm": str(self.design), "researcher": str(self.research)})
+        self.run = mock.Mock(side_effect=AssertionError("local documents must not call gh"))
+
+    def test_completion_reference_survives_promotion_and_becomes_build_prd(self):
+        path = self.design / "document-PRD-9-session.md"
+        path.write_text("# Local PRD\nBuild local delivery.\n")
+        ctx = SimpleNamespace(
+            role="pm",
+            document=str(path),
+            repos={},
+            project=None,
+            tracker=SimpleNamespace(state_name=lambda _: "Handoff"),
+        )
+        body, _, _ = writeback._completion_body(
+            ctx, delegate.Outcome(status="done", title="Delivery", summary="Ready.")
+        )
+        description = handoff.handoff(
+            "PRD-9",
+            "",
+            sources=[],
+            instructions=[],
+            comments=[("PM", "2026-10-23T00:00:00Z", body)],
+        )
+        self.assertNotIn(path.as_uri(), handoff.head(description))
+        iss = issue(description, ident="ENG-10")
+        sources = inputs.gather(iss, "engineer", self.docs, run=self.run)
+        text = inputs.render(
+            iss, "engineer", sources, target=target.Target("acme", "app"), docs=self.docs
+        )
+        self.assertIn("# Local PRD", text)
+        self.assertIn(path.as_uri(), text)
+        self.assertIn("## PRD:", text)
+        self.assertEqual(len(sources.docs), 1)
+
+    def test_file_uris_absolute_paths_and_notes_are_deduplicated(self):
+        path = self.research / "document-RES-4-session.md"
+        path.write_text("Research")
+        iss = issue(
+            path.as_uri(),
+            notes=(note(str(path), "2026-10-23T00:00:00Z"),),
+            links=(Link(str(path)),),
+        )
+        sources = inputs.gather(iss, "engineer", self.docs, run=self.run)
+        self.assertEqual([(d.path, d.text) for d in sources.docs], [(str(path), "Research")])
+        self.assertEqual(inputs.doc_url(self.docs, str(path)), path.as_uri())
+
+    def test_local_earlier_version_uses_mtime(self):
+        newer = self.design / "a-RES-4-new.md"
+        older = self.design / "z-RES-4-old.md"
+        newer.write_text("new")
+        older.write_text("old")
+        os.utime(older, (10, 10))
+        os.utime(newer, (20, 20))
+        src = inputs.gather(issue(), "pm", self.docs, run=self.run)
+        self.assertEqual((src.earlier.path, src.earlier.text), (str(newer), "new"))
+
+    def test_local_missing_and_listing_failures(self):
+        missing = self.research / "missing.md"
+        src = inputs.gather(issue(missing.as_uri()), "engineer", self.docs, run=self.run)
+        self.assertIsNone(src.docs[0].text)
+        docs = replace(self.docs, dirs={"pm": str(self.root / "missing")})
+        self.assertIsNone(inputs.gather(issue(), "pm", docs, run=self.run).earlier)
+        with (
+            mock.patch("os.listdir", side_effect=PermissionError("denied")),
+            self.assertRaises(inputs.InputError),
+        ):
+            inputs.listing(self.run, self.docs, str(self.design))
+        with self.assertRaises(inputs.InputError):
+            inputs.listing(self.run, self.docs, str(self.root))
+        with self.assertRaises(inputs.InputError):
+            inputs._read(self.run, self.docs, str(self.root / "outside.md"))
+        self.assertEqual(inputs._doc_fence(src.docs[0], ""), "(not found on local filesystem)")
+
+    def test_earlier_listing_stat_failure_becomes_input_error(self):
+        with (
+            mock.patch("os.listdir", return_value=["document-RES-4-session.md"]),
+            mock.patch("os.path.isfile", return_value=True),
+            mock.patch("os.stat", side_effect=PermissionError("denied")),
+            self.assertRaises(inputs.InputError),
+        ):
+            inputs.gather(issue(), "pm", self.docs, run=self.run)
+
+    def test_local_references_reject_other_roots_and_traversal(self):
+        outside = Path(self.home) / "secret.md"
+        outside.write_text("secret")
+        for url in (
+            outside.as_uri(),
+            self.design.as_uri() + "/../secret.md",
+            self.design.as_uri() + "/%2e%2e/secret.md",
+            self.design.as_uri() + "/bad%00.md",
+            "file://other-host" + str(outside),
+        ):
+            with self.subTest(url=url):
+                self.assertIsNone(inputs.doc_path(url, self.docs))
+        src = inputs.gather(issue(outside.as_uri()), "engineer", self.docs, run=self.run)
+        self.assertEqual(src.docs, ())
+
+    def test_malformed_file_uri_is_ignored_instead_of_aborting_gather(self):
+        url = "file://[broken/a.md"
+        self.assertIsNone(inputs.doc_path(url, self.docs))
+        self.assertEqual(
+            inputs.gather(issue(links=(Link(url),)), "engineer", self.docs, run=self.run).docs, ()
+        )
+
+    def test_confined_reads_reject_symlink_special_file_size_and_encoding(self):
+        outside = Path(self.home) / "secret.md"
+        outside.write_text("secret")
+        link = self.design / "escape.md"
+        link.symlink_to(outside)
+        directory = self.design / "directory.md"
+        directory.mkdir()
+        fifo = self.design / "pipe.md"
+        os.mkfifo(fifo)
+        huge = self.design / "huge.md"
+        huge.write_bytes(b"a" * 1_000_001)
+        invalid = self.design / "invalid.md"
+        invalid.write_bytes(b"\xff")
+        for path in (link, directory, fifo, huge, invalid):
+            with self.subTest(path=path), self.assertRaises(inputs.InputError):
+                inputs._read(self.run, self.docs, str(path))
+
+    def test_mixed_local_and_github_sources(self):
+        path = self.design / "prd.md"
+        path.write_text("Local PRD")
+        docs = replace(DOCS, dirs={"researcher": "Research/", "pm": str(self.design)})
+        run = Gh({endpoint("Research/report.md"): ok("GitHub report")})
+        src = inputs.gather(
+            issue(f"{BASE}Research/report.md\n{path.as_uri()}"), "engineer", docs, run=run
+        )
+        self.assertEqual({d.text for d in src.docs}, {"Local PRD", "GitHub report"})
+
+
 class BuildInputs(Case):
+    def test_document_host_and_scheme_case_do_not_change_discovery(self):
+        docs = replace(DOCS, host="ghe.example.com")
+        path = "Product Design/prd.md"
+        url = "HTTPS://GHE.EXAMPLE.COM/ophis/private_docs/blob/main/Product%20Design/prd.md"
+        self.assertEqual(inputs.doc_path(url, docs), path)
+        self.assertIsNone(inputs.doc_path(url.replace("/main/", "/MAIN/"), docs))
+        run = Gh({endpoint("Product%20Design/prd.md"): ok("# Case-preserving PRD")})
+        src = inputs.gather(issue(url), "engineer", docs, run=run)
+        self.assertEqual(src.docs[0].text, "# Case-preserving PRD")
+
+    def test_enterprise_earlier_version_uses_host_for_listing_and_read(self):
+        docs = replace(DOCS, host="ghe.example.com")
+        path = "Product Design/2026-10-23-RES-4-spec.md"
+        run = Gh(
+            {
+                endpoint("Product%20Design"): listing("2026-10-23-RES-4-spec.md"),
+                endpoint("Product%20Design/2026-10-23-RES-4-spec.md"): ok("# Enterprise design"),
+            }
+        )
+        src = inputs.gather(issue(), "pm", docs, run=run)
+        self.assertEqual((src.earlier.path, src.earlier.text), (path, "# Enterprise design"))
+        self.assertEqual(
+            run.calls[0],
+            (["gh", "api", "--hostname", "ghe.example.com", endpoint("Product%20Design")], SHORT),
+        )
+        self.assertIn("--hostname", run.calls[1][0])
+
+    def test_enterprise_document_reads_and_repo_input(self):
+        docs = replace(DOCS, host="ghe.example.com")
+        url = "https://ghe.example.com/ophis/private_docs/blob/main/Product%20Design/prd.md"
+        run = Gh({endpoint("Product%20Design/prd.md"): ok("# Enterprise PRD")})
+        src = inputs.gather(issue(links=(Link(url),)), "engineer", docs, run=run)
+        text = inputs.render(
+            issue(ident="ENG-7"),
+            "engineer",
+            src,
+            target=target.Target("acme", "app", host="ghe.example.com"),
+            docs=docs,
+        )
+        self.assertIn("Repo: ghe.example.com/acme/app", text)
+        self.assertIn("# Enterprise PRD", text)
+        self.assertIn("--hostname", run.calls[0][0])
+        self.assertEqual(
+            inputs.doc_url(docs, "Research/a b.md"),
+            "https://ghe.example.com/ophis/private_docs/blob/main/Research/a%20b.md",
+        )
+        self.assertIsNone(inputs.doc_path(BASE + "Research/a.md", docs))
+
     TARGET = target.Target("ophis", "agent-pm", "ENG-7-session-registry")
 
     PRD = inputs.Doc(

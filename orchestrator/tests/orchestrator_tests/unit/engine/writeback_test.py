@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -655,6 +656,63 @@ ACCOUNTS = Accounts(
 
 
 class WritebackContext(run_fixtures.Base):
+    def test_context_resolves_build_host_fallback_and_explicit_override(self):
+        cfg = config.load()
+        cfg = replace(cfg, docs=replace(cfg.docs, host="ghe.example.com"))
+        for explicit, expected in (
+            (None, "ghe.example.com"),
+            ("github.com", "github.com"),
+            ("build.example.com", "build.example.com"),
+        ):
+            with self.subTest(explicit=explicit):
+                role = cfg.roles["engineer"]
+                output = {"type": "pull-request"} | ({"host": explicit} if explicit else {})
+                current = replace(
+                    cfg,
+                    roles=dict(cfg.roles)
+                    | {"engineer": replace(role, run=replace(role.run, output=output))},
+                )
+                ctx = writeback.context(
+                    current,
+                    "engineer",
+                    ACCOUNTS,
+                    ident=ID,
+                    issue_id=UUID,
+                    sid=SID,
+                    resume=False,
+                    project=PROJECT,
+                    target=TARGET,
+                )
+                self.assertEqual(ctx.host, expected)
+                self.assertEqual(
+                    writeback._url(ctx, f"https://{expected}/ophis/agent-pm/pull/1"),
+                    f"https://{expected}/ophis/agent-pm/pull/1",
+                )
+
+    def test_local_document_reference_is_constructed_for_launch_and_recovery(self):
+        cfg = config.load()
+        directory = os.path.join(cfg.work_dir, "docs", "researcher")
+        cfg = replace(cfg, docs=replace(cfg.docs, dirs={"researcher": directory}))
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                ctx = writeback.context(
+                    cfg,
+                    "researcher",
+                    ACCOUNTS,
+                    ident=ID,
+                    issue_id=UUID,
+                    sid=SID,
+                    resume=resume,
+                    project=PROJECT,
+                    target=None,
+                )
+                body, _, url = writeback._completion_body(
+                    ctx, Outcome(status="done", title="Report", summary="Ready.")
+                )
+                expected = Path(directory, f"document-{ID}-{SID}.md").as_uri()
+                self.assertEqual(url, expected)
+                self.assertIn(expected, body)
+
     def test_the_one_context_of_a_role_from_its_accounts(self):
         cfg = config.load()
         for resume, target in ((False, TARGET), (True, None)):
@@ -952,6 +1010,44 @@ class OutcomeFiles(Base):
 
 
 class EngineeringUrls(Base):
+    def test_local_completion_posts_reference_without_external_attachment(self):
+        gql = Gql()
+        ctx = self.ctx("researcher", gql=gql)
+        path = self.write(ctx, "documents/result.md", "Report")
+        ctx = replace(ctx, document=path)
+        self.assertTrue(
+            writeback.finish(ctx, Outcome(status="done", title="Report", summary="Ready."))
+        )
+        self.assertEqual(
+            gql.calls, expect(body=f"Ready.\n\n{Path(path).as_uri()}", state="in_review")
+        )
+
+    def test_incomplete_local_outcomes_do_not_publish_output_reference(self):
+        ctx = replace(self.ctx("researcher"), document="/docs/not-complete.md")
+        for status in ("failed", "needs_input"):
+            with self.subTest(status=status):
+                body, _, url = writeback._completion_body(
+                    ctx,
+                    Outcome(
+                        status=status,
+                        title="Incomplete",
+                        summary="Stopped.",
+                        questions=["Which?"],
+                        url="/docs/not-complete.md",
+                    ),
+                )
+                self.assertNotIn("not-complete.md", body)
+                self.assertEqual(url, "")
+
+    def test_enterprise_completion_accepts_only_target_host(self):
+        ctx = replace(self.ctx(), host="ghe.example.com")
+        url = PR.replace("github.com", "ghe.example.com")
+        self.assertEqual(writeback._url(ctx, url), url)
+        self.assertEqual(writeback._url(ctx, PR), "")
+        self.assertEqual(
+            writeback._url(ctx, url.replace("ghe.example.com/", "ghe.example.com.evil/")), ""
+        )
+
     def test_an_engineering_url_must_be_on_the_target(self):
         evil = "https://github.com/ophis/agent-pm-evil/pull/1"
         for name, target, o, calls, skip in (

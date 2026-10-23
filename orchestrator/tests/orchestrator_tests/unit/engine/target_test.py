@@ -49,6 +49,45 @@ def issue(description, title="ENG: Session Registry", ident="TASK-26", project=N
 
 
 class RepositoryDescription(Case):
+    def test_enterprise_host_is_explicit_and_constrained(self):
+        for value in (
+            "acme/app",
+            "https://ghe.example.com/acme/app.git",
+            "git@ghe.example.com:acme/app.git",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    target.parse_repo("Repo: " + value, host="ghe.example.com"), ("acme", "app")
+                )
+        self.assertIsInstance(
+            target.parse_repo("Repo: https://github.com/acme/app", host="ghe.example.com"),
+            target.Invalid,
+        )
+
+    def test_enterprise_target_uses_host_for_api_and_branch_lookup(self):
+        run = FakeRun([(("gh", "api"), api("acme/app")), (("git",), ok())])
+        got = target.check(
+            issue("Repo: https://ghe.example.com/acme/app"),
+            {},
+            run=run,
+            delegate=FakeDelegate,
+            workdir=self.home,
+            roles=roles(),
+            host="ghe.example.com",
+        )
+        self.assertEqual((got.owner, got.name, got.host), ("acme", "app", "ghe.example.com"))
+        self.assertIn("--hostname", run.calls[0][0])
+        self.assertIn("ghe.example.com", run.calls[0][0])
+        self.assertIn("https://ghe.example.com/acme/app.git", run.calls[-1][0])
+
+    def test_enterprise_clone_selection_does_not_reuse_public_clone(self):
+        t = target.Target("acme", "app", host="ghe.example.com")
+        clones = {"github.com/acme/app": "/public", "ghe.example.com/acme/app": "/enterprise"}
+        got = target.with_clone(
+            t, "TASK-26", delegate=FakeDelegate, workdir=self.home, clones=clones
+        )
+        self.assertEqual(got.clone, "/enterprise")
+
     def test_accepted(self):
         for line in (
             "Repo: ophis/agent-pm",

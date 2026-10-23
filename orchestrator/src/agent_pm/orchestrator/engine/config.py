@@ -160,14 +160,17 @@ def path():
 
 
 def shell(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
-    return utils.sh(argv, timeout, env={**os.environ, "PATH": path()})
+    env = {**os.environ, "PATH": path()}
+    if argv[:1] == ["gh"] and "--hostname" not in argv:
+        env["GH_HOST"] = "github.com"
+    return utils.sh(argv, timeout, env=env)
 
 
 def writable(work):
     return (work, *temp_dirs())
 
 
-def clone_error(clone, slug, *, run=None):
+def clone_error(clone, slug, *, run=None, host="github.com"):
     run = run or shell
     if not clone.isprintable():
         return f"{clone!r} has a non-printable character"
@@ -185,8 +188,13 @@ def clone_error(clone, slug, *, run=None):
         subprocess.TimeoutExpired,
     ) as e:  # UnicodeDecodeError, from non-UTF-8 git output, is a ValueError
         return f"git: {e}"
-    if found.host != "github.com" or f"{found.owner}/{found.name}".lower() != slug.lower():
-        return f"origin is {found.slug}, not github.com/{slug}"
+    expected = (
+        utils.Repo(*slug.split("/"))
+        if slug.count("/") == 2
+        else utils.Repo(host.lower(), *slug.split("/"))
+    )
+    if found.slug.lower() != expected.slug.lower():
+        return f"origin is {found.slug}, not {expected.slug}"
     return None
 
 
@@ -231,7 +239,8 @@ def _work_dir(cfg, clones=None, *, board=None):
 
 def _load(cfg, work, kind, delegates, index, *, board):
     roles = _runnable(cfg, work, delegates[kind], index)
-    docs = _docs(roles, LOCAL)
+    docs = _docs(roles, LOCAL, work)
+    _clone_origins(cfg["local_clones"], roles, docs)
     frozen = {
         k: MappingProxyType(dict(cfg[k]))
         for k in ("task_tiers", "client_max_runs", "usage_limit", "local_clones")
@@ -468,8 +477,17 @@ def _local_clones(cfg):
         )
     seen = {}
     for k, v in clones.items():
+        try:
+            parts = k.split("/")
+            valid = bool(utils.repo_slug(k)) or (
+                len(parts) == 3
+                and bool(utils.repo_slug("/".join(parts[1:])))
+                and utils.Repo.parse(f"{parts[0]}/owner/repo").host == parts[0].lower()
+            )
+        except utils.Invalid:
+            valid = False
         if (
-            not utils.repo_slug(k)
+            not valid
             or not isinstance(v, str)
             or not v.startswith(("/", "~"))
             or not v.isprintable()
@@ -613,6 +631,12 @@ def _resolve_roles(cfg, overlay, delegate_cls, index):
             tasks = tuple(index[name])
         except delegate.ConfigError as e:
             raise ConfigError(f"core: {e}") from None
+        if host := run.output.get("host"):
+            try:
+                if utils.Repo.parse(f"{host}/owner/repo").host != host.lower():
+                    raise utils.Invalid(host)
+            except utils.Invalid:
+                raise ConfigError(f"core: [roles.{name}.output] invalid host: {host!r}") from None
         out[name] = Role(tasks, p.get("max_runs", 1), run)
     return out
 
@@ -628,20 +652,66 @@ def _runnable_inputs(cfg, roles):
                 raise ConfigError(
                     f"orchestrator/config.toml: {table}.{task} is not a task of a role in orchestrator/config.toml"
                 )
-    for key, path in cfg["local_clones"].items():
-        if reason := clone_error(path, key):
+
+
+def _clone_origins(clones, roles, docs):
+    hosts = {
+        (r.run.output.get("host") or docs.host).lower()
+        for name, r in roles.items()
+        if TASKS[name].input == "build"
+    }
+    seen, resolved = {}, {}
+    for key in clones:
+        if key.count("/") == 1 and len(hosts) > 1:
+            raise ConfigError(
+                f"orchestrator/config.toml: local_clones.{key}: use host/owner/name when build hosts differ"
+            )
+        host = next(iter(hosts), docs.host)
+        repo = (
+            utils.Repo(host, *key.split("/"))
+            if key.count("/") == 1
+            else utils.Repo(*key.split("/"))
+        )
+        canonical = repo.slug.lower()
+        if canonical in seen:
+            raise ConfigError(
+                f"orchestrator/config.toml: local_clones.{seen[canonical]} and local_clones.{key} are the same repo"
+            )
+        seen[canonical] = key
+        resolved[key] = repo.slug
+    for key, slug in resolved.items():
+        if reason := clone_error(clones[key], slug):
             raise ConfigError(f"orchestrator/config.toml: local_clones.{key}: {reason}")
 
 
-def _docs(roles, local):
-    outs = {name: o for name, r in roles.items() if (o := r.run.output)["type"] == "github"}
-    targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
+def _docs(roles, local, work):
+    outs, dirs = {}, {}
+    for role, resolved in roles.items():
+        if TASKS[role].input == "build":
+            continue
+        output = resolved.run.output
+        if output["type"] == "github":
+            if os.path.isabs(output["dir"]):
+                raise ConfigError(f"core: document role {role}: github dir must be relative")
+            outs[role] = output
+            dirs[role] = output["dir"]
+        elif output["type"] in ("local", "orchestrator"):
+            dirs[role] = os.path.join(work, "docs", role)
+        else:
+            raise ConfigError(
+                f"core: document role {role}: unsupported destination {output['type']!r}"
+            )
+    targets = {
+        (o.get("repo"), o.get("branch"), o.get("host", "github.com").lower()) for o in outs.values()
+    }
     name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
-    if not name or not branch or host != "github.com":
+    if outs and (not name or not branch or not host):
         raise ConfigError(
-            f"core: document roles must publish to one github.com repo and branch (their [output] in {local})"
+            f"core: GitHub document roles must publish to one host, repo and branch (their [output] in {local})"
         )
-    return Docs(name, branch, MappingProxyType({r: o["dir"] for r, o in outs.items()}))
+    return Docs(
+        name or "", branch or "", MappingProxyType(dirs), host.lower() if host else "github.com"
+    )
 
 
 def _stage_order():

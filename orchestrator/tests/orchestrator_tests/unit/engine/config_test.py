@@ -1436,6 +1436,14 @@ class ExecutablePath(Case):
 
 
 class ShellExecution(Case):
+    def test_configured_default_github_commands_override_inherited_host(self):
+        with (
+            mock.patch.dict(os.environ, {"GH_HOST": "ghe.example.com"}),
+            mock.patch("subprocess.run", return_value="result") as run,
+        ):
+            config.shell(["gh", "api", "repos/acme/app"], 5)
+        self.assertEqual(run.call_args.kwargs["env"]["GH_HOST"], "github.com")
+
     def test_clone_default_shell_uses_configured_path_and_inherited_environment(self):
         clone = os.path.join(self.home, "clone")
         os.makedirs(os.path.join(clone, ".git"))
@@ -1788,7 +1796,7 @@ class ConfigurationRoot(ConfigFile, Case):
 
     def test_docs_mismatch(self):
         message = (
-            "core: document roles must publish to one github.com repo and branch (their [output] in "
+            "core: GitHub document roles must publish to one host, repo and branch (their [output] in "
             "~/.agent-pm/config.local.toml)"
         )
         for design in (
@@ -1800,7 +1808,123 @@ class ConfigurationRoot(ConfigFile, Case):
                 self.core(CORE_TOML.replace(DESIGN, design))
                 self.fails(message, PIPELINE)
         self.core(CORE_TOML)
-        self.fails(message, HEADER + ENGINEER_ONLY + role("engineer"))
+        self.assertEqual(self.load(HEADER + ENGINEER_ONLY + role("engineer")).docs.dirs, {})
+
+    def test_enterprise_document_and_build_hosts(self):
+        self.core(
+            CORE_TOML.replace('type = "github",', 'type = "github", host = "ghe.example.com",')
+        )
+        cfg = self.load(PIPELINE)
+        self.assertEqual(cfg.docs.host, "ghe.example.com")
+        self.assertEqual(cfg.repo_host("engineer"), "ghe.example.com")
+        cfg = self.load(
+            PIPELINE
+            + '[core.roles.engineer.output]\ntype = "pull-request"\nhost = "build.example.com"\n'
+        )
+        self.assertEqual(cfg.repo_host("engineer"), "build.example.com")
+
+    def test_local_document_roles_and_mixed_destinations(self):
+        for kind in ("local", "orchestrator"):
+            with self.subTest(kind=kind):
+                self.core(CORE_TOML.replace('type = "github"', f'type = "{kind}"'))
+                cfg = self.load(PIPELINE)
+                self.assertEqual((cfg.docs.repo, cfg.docs.branch), ("", ""))
+                self.assertEqual(cfg.docs.dirs["pm"], os.path.join(cfg.work_dir, "docs", "pm"))
+                self.assertEqual(
+                    cfg.docs.local_out("pm", "TASK-1", SID),
+                    os.path.join(cfg.docs.dirs["pm"], f"document-TASK-1-{SID}.md"),
+                )
+                self.assertEqual(cfg.repo_host("engineer"), "github.com")
+        self.core(CORE_TOML.replace(DESIGN, 'output = { type = "local" }'))
+        cfg = self.load(PIPELINE)
+        self.assertEqual(cfg.docs.dirs["researcher"], "Research/")
+        self.assertTrue(os.path.isabs(cfg.docs.dirs["pm"]))
+        self.assertIsNone(cfg.docs.local_out("researcher", "TASK-1", SID))
+
+    def test_document_destination_must_be_supported(self):
+        self.core(CORE_TOML.replace(DESIGN, 'output = { type = "pull-request" }'))
+        with self.assertRaisesRegex(config.ConfigError, "pm.*pull-request"):
+            self.load(PIPELINE)
+        self.core(CORE_TOML.replace('dir = "Designs/"', 'dir = "/documents"'))
+        with self.assertRaisesRegex(config.ConfigError, "github dir must be relative"):
+            self.load(PIPELINE)
+
+    def test_enterprise_clone_keys_are_host_specific(self):
+        clone = os.path.join(self.home, "enterprise-clone")
+        os.makedirs(os.path.join(clone, ".git"))
+        remote = CompletedProcess([], 0, "git@ghe.example.com:acme/app.git\n", "")
+        with mock.patch("subprocess.run", return_value=remote):
+            cfg = self.load(PIPELINE + f'[local_clones]\n"ghe.example.com/acme/app" = "{clone}"\n')
+            self.assertEqual(cfg.local_clones["ghe.example.com/acme/app"], clone)
+            self.assertIsNone(config.clone_error(clone, "acme/app", host="ghe.example.com"))
+            self.assertIn("not github.com/acme/app", config.clone_error(clone, "acme/app"))
+
+    def test_clone_repository_names_ending_in_git_keep_their_identity(self):
+        clone = os.path.join(self.home, "suffix-clone")
+        os.makedirs(os.path.join(clone, ".git"))
+        for key in ("acme/app.git", "github.com/acme/app.git"):
+            with self.subTest(key=key):
+                text = PIPELINE + f'[local_clones]\n"{key}" = "{clone}"\n'
+                remote = CompletedProcess([], 0, "git@github.com:acme/app.git.git\n", "")
+                with mock.patch("subprocess.run", return_value=remote):
+                    self.assertEqual(self.load(text).local_clones[key], clone)
+                wrong = CompletedProcess([], 0, "git@github.com:acme/app.git\n", "")
+                with (
+                    mock.patch("subprocess.run", return_value=wrong),
+                    self.assertRaisesRegex(config.ConfigError, "not github.com/acme/app.git"),
+                ):
+                    self.load(text)
+
+    def test_bare_clone_keys_infer_enterprise_host_and_reject_public_origin(self):
+        self.core(
+            CORE_TOML.replace('type = "github",', 'type = "github", host = "ghe.example.com",')
+        )
+        clone = os.path.join(self.home, "inferred-clone")
+        os.makedirs(os.path.join(clone, ".git"))
+        text = PIPELINE + f'[local_clones]\n"acme/app" = "{clone}"\n'
+        remote = CompletedProcess([], 0, "git@ghe.example.com:acme/app.git\n", "")
+        with mock.patch("subprocess.run", return_value=remote):
+            self.assertEqual(self.load(text).local_clones["acme/app"], clone)
+        wrong = CompletedProcess([], 0, "git@github.com:acme/app.git\n", "")
+        with (
+            mock.patch("subprocess.run", return_value=wrong),
+            self.assertRaisesRegex(config.ConfigError, "not ghe.example.com/acme/app"),
+        ):
+            self.load(text)
+
+    def test_bare_clone_keys_are_ambiguous_with_multiple_build_hosts(self):
+        self.core(
+            CORE_TOML.replace(
+                'type = "pull-request"', 'type = "pull-request", host = "other.example.com"'
+            )
+        )
+        stages = workflow_line(
+            '[[stage]]\nrole = "researcher"\ninput = "research"\n[[stage]]\nrole = "pm"\ninput = "build"\n[[stage]]\nrole = "engineer"\ninput = "build"\n'
+        )
+        with self.assertRaisesRegex(
+            config.ConfigError, "use host/owner/name when build hosts differ"
+        ):
+            self.load(
+                HEADER
+                + stages
+                + role("researcher")
+                + role("pm")
+                + role("engineer")
+                + '[local_clones]\n"acme/app" = "/clone"\n'
+            )
+
+    def test_invalid_host_and_duplicate_qualified_clone_fail(self):
+        for host in ("https://ghe.example.com", "bad host", "ghe.example.com/path"):
+            with self.subTest(host=host):
+                self.core(CORE_TOML.replace(DESIGN, DESIGN.replace(" }", f', host = "{host}" }}')))
+                with self.assertRaisesRegex(config.ConfigError, "invalid host"):
+                    self.load(PIPELINE)
+        self.core(CORE_TOML)
+        with self.assertRaisesRegex(config.ConfigError, "same repo"):
+            self.load(
+                PIPELINE
+                + '[local_clones]\n"acme/app" = "/clone"\n"github.com/acme/app" = "/clone2"\n'
+            )
 
 
 # A local table that stays empty is dropped (utils/src/agent_pm/utils/config_file.py), so a role

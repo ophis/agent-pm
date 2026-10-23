@@ -29,6 +29,15 @@ class Docs:
     repo: str
     branch: str
     dirs: Mapping[str, str]
+    host: str = "github.com"
+
+    def local_out(self, role: str, ident: str, sid: str) -> str | None:
+        directory = self.dirs.get(role, "")
+        return (
+            os.path.join(directory, f"document-{ident}-{sid}.md")
+            if os.path.isabs(directory)
+            else None
+        )
 
 
 class TrackerKind(StrEnum):
@@ -88,6 +97,9 @@ class Config:
     @property
     def delegate_cls(self) -> type:
         return self.delegates[self.delegate_kind]
+
+    def repo_host(self, role: str) -> str:
+        return (self.roles[role].run.output.get("host") or self.docs.host).lower()
 
     @property
     def workdirs(self) -> str:
@@ -367,6 +379,7 @@ class Target:
     name: str
     branch: str = ""
     clone: str = ""
+    host: str = "github.com"
 
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")

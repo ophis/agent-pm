@@ -19,14 +19,16 @@ from agent_pm.utils import checkout as clone_checkout
 MAPPED = "project mapping "
 
 
-def _one(value):
+def _one(value, host):
     v = value.strip()
     m = re.fullmatch(r"\[[^\]]*\]\(<?([^)>]+)>?\)", v)
     if m:
         v = m.group(1).strip()
-    if v.startswith("git@github.com:") and not v.endswith("/"):
-        v = "https://github.com/" + v.removeprefix("git@github.com:")
-    if not v.startswith("https://github.com/"):
+    ssh = f"git@{host}:"
+    if v[: len(ssh)].lower() == ssh.lower() and not v.endswith("/"):
+        v = f"https://{host}/" + v[len(ssh) :]
+    prefix = f"https://{host}/"
+    if v[: len(prefix)].lower() != prefix.lower():
         return repo_slug(v)
     try:
         repo = Repo.parse(v)
@@ -35,14 +37,14 @@ def _one(value):
     return repo.owner, repo.name
 
 
-def parse_repo(description) -> tuple[str, str] | Invalid:
+def parse_repo(description, *, host="github.com") -> tuple[str, str] | Invalid:
     found = []
     for line in handoff.head(description).splitlines():
         m = re.match(
             r"^\s*(?:[-*>]\s+)?(?:\*\*|`)?repo:(?:\*\*)?\s*(.+?)\s*$", line.rstrip("\r"), re.I
         )
         if m:
-            one = _one(m.group(1).strip("`*").strip())
+            one = _one(m.group(1).strip("`*").strip(), host)
             if not one:
                 return Invalid(f"unreadable Repo line: {m.group(1)[:80]!r}")
             found.append(one)
@@ -69,15 +71,18 @@ def pr_title(ident, title):
     return " ".join(re.sub(r"[^\w .,:()/-]", " ", t).split())
 
 
-def research_repo(issue, repos) -> Target | None:
-    if parse_repo(issue.description) != NO_LINE or issue.home not in repos:
+def research_repo(issue, repos, *, host="github.com") -> Target | None:
+    if parse_repo(issue.description, host=host) != NO_LINE or issue.home not in repos:
         return None
     one = repo_slug(repos[issue.home])
-    return Target(*one) if one else None
+    return Target(*one, host=host) if one else None
 
 
-def _repo_info(o, n, run):
-    res = run(["gh", "api", f"repos/{o}/{n}"], SHORT)
+def _repo_info(o, n, run, host):
+    res = run(
+        ["gh", "api", *(["--hostname", host] if host != "github.com" else []), f"repos/{o}/{n}"],
+        SHORT,
+    )
     if res.returncode != 0:
         code = re.search(r"HTTP (\d{3})", res.stderr or "")
         if code and code.group(1) in ("403", "404"):
@@ -109,7 +114,7 @@ def checkout(ident, owner, name, *, delegate, workdir) -> str | None:
     )
 
 
-def _branches(ident, o, n, *, run, delegate, workdir, roles):
+def _branches(ident, o, n, *, run, delegate, workdir, roles, host):
     # a worktree's are read on GitHub: its clone is known only from a `.git` file the agent run
     # could have changed
     path = checkout(ident, o, n, delegate=delegate, workdir=workdir)
@@ -150,7 +155,7 @@ def _branches(ident, o, n, *, run, delegate, workdir, roles):
             "credential.helper=!gh auth git-credential",
             "ls-remote",
             "--heads",
-            f"https://github.com/{o}/{n}.git",
+            f"https://{host}/{o}/{n}.git",
             f"{ident}-*",
         ],
         SHORT,
@@ -162,10 +167,12 @@ def _branches(ident, o, n, *, run, delegate, workdir, roles):
     ]
 
 
-def check(issue, repos, *, run=None, delegate, workdir, roles) -> Target | Invalid | Transient:
+def check(
+    issue, repos, *, run=None, delegate, workdir, roles, host="github.com"
+) -> Target | Invalid | Transient:
     if run is None:
         run = config.shell
-    repo = parse_repo(issue.description)
+    repo = parse_repo(issue.description, host=host)
     mapped = repo == NO_LINE and issue.home in repos
     tag = MAPPED if mapped else ""
     if mapped:
@@ -175,7 +182,7 @@ def check(issue, repos, *, run=None, delegate, workdir, roles) -> Target | Inval
     if isinstance(repo, Invalid):
         return repo
     asked = f"{tag}{repo[0]}/{repo[1]}"
-    info = _repo_info(*repo, run)
+    info = _repo_info(*repo, run, host)
     if isinstance(info, Invalid):
         return Invalid(tag + info.reason, mapped=mapped)
     if isinstance(info, Transient):
@@ -186,14 +193,16 @@ def check(issue, repos, *, run=None, delegate, workdir, roles) -> Target | Inval
     if not isinstance(default, str) or not REF.fullmatch(default):
         return Invalid(f"{asked}: unsafe default branch name", mapped=mapped)
     ident = issue.identifier
-    names = _branches(ident, o, n, run=run, delegate=delegate, workdir=workdir, roles=roles)
+    names = _branches(
+        ident, o, n, run=run, delegate=delegate, workdir=workdir, roles=roles, host=host
+    )
     if isinstance(names, Transient):
         return names
     if len(names) > 1:
         return Invalid(f"several {ident}-* branches: {', '.join(names)[:200]}")
     if names and not re.fullmatch(rf"{re.escape(ident)}-[a-z0-9-]{{1,40}}", names[0]):
         return Invalid(f"existing branch name {names[0][:80]!r} is not {ident}-<lowercase slug>")
-    return Target(o, n, names[0] if names else f"{ident}-{slug(issue.title)}")
+    return Target(o, n, names[0] if names else f"{ident}-{slug(issue.title)}", host=host)
 
 
 def with_clone(t, ident, *, run=None, delegate, workdir, clones, writable=None) -> Target:
@@ -208,6 +217,20 @@ def with_clone(t, ident, *, run=None, delegate, workdir, clones, writable=None) 
     if path and (common := common_dir(path)):
         clone = os.path.dirname(common)
         roots = config.writable(os.path.dirname(workdir)) if writable is None else writable
-        if not under(common, roots) and config.clone_error(clone, full, run=run) is None:
+        if (
+            not under(common, roots)
+            and config.clone_error(clone, full, run=run, host=t.host) is None
+        ):
             return replace(t, clone=clone)
-    return replace(t, clone=next((v for k, v in clones.items() if k.lower() == full.lower()), ""))
+    return replace(
+        t,
+        clone=next(
+            (
+                v
+                for k, v in clones.items()
+                if (k if k.count("/") == 2 else f"{t.host}/{k}").lower()
+                == f"{t.host}/{full}".lower()
+            ),
+            "",
+        ),
+    )

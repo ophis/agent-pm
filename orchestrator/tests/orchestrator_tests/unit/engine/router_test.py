@@ -14,6 +14,7 @@ import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
@@ -3167,6 +3168,70 @@ class RunLaunching(OuterBase):
     """FR-45, FR-47's resume check: the outer reads the issue, checks its repo, renders its input,
     records the run and detaches its LinearRun (FR-25).
     """
+
+    def test_enterprise_target_host_reaches_router_checks_and_delegate_input(self):
+        docs = '\n[core.roles.researcher.output]\ntype = "github"\nhost = "ghe.example.com"\nrepo = "ophis/private_docs"\nbranch = "main"\ndir = "Research/"\n[core.roles.pm.output]\ntype = "local"\n'
+        for explicit, expected in (
+            (None, "ghe.example.com"),
+            ("github.com", "github.com"),
+            ("build.example.com", "build.example.com"),
+        ):
+            with self.subTest(explicit=explicit):
+                output = '\n[core.roles.engineer.output]\ntype = "pull-request"\n' + (
+                    f'host = "{explicit}"\n' if explicit else ""
+                )
+                self.write_config(OUTER + docs + output)
+                api = (
+                    ("gh", "api")
+                    + (() if expected == "github.com" else ("--hostname", expected))
+                    + ("repos/ophis/agent-pm",)
+                )
+                search = (() if expected == "github.com" else ("env", f"GH_HOST={expected}")) + (
+                    "gh",
+                    "search",
+                    "prs",
+                )
+                self.run_.calls.clear()
+                self.run_.table = [
+                    (api, ENG_RUN[0][1]),
+                    (("git",), ok()),
+                    (
+                        (
+                            "gh",
+                            "api",
+                            "--hostname",
+                            "ghe.example.com",
+                            "repos/ophis/private_docs/contents/Research?ref=main",
+                        ),
+                        ok("[]"),
+                    ),
+                    (search, ok("[]")),
+                ]
+                self.assertEqual(self.outer(), 0)
+                self.assertEqual(self.run_.calls[0], (api, SHORT))
+                self.assertIn(f"https://{expected}/Ophis/Agent-PM.git", self.run_.calls[1][0])
+                spec = self.api.detached[-1][1]
+                self.assertIn(
+                    "Repo: "
+                    + (
+                        "Ophis/Agent-PM"
+                        if expected == "github.com"
+                        else expected + "/Ophis/Agent-PM"
+                    ),
+                    spec.input,
+                )
+
+    def test_router_inlines_local_prd_from_configured_document_directory(self):
+        self.write_config(OUTER + '\n[core.roles.pm.output]\ntype = "local"\n')
+        directory = Path(self.cfg().docs.dirs["pm"])
+        directory.mkdir(parents=True)
+        path = directory / "design.md"
+        path.write_text("# Router local PRD")
+        self.gql.issue["description"] = path.as_uri()
+        self.assertEqual(self.outer(), 0)
+        spec = self.api.detached[-1][1]
+        self.assertIn("# Router local PRD", spec.input)
+        self.assertIn(path.as_uri(), spec.input)
 
     def test_build_detaches_its_linear_run_after_its_start_row(self):
         self.assertEqual(self.outer(), 0)

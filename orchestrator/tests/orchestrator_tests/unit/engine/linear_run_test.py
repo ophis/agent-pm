@@ -49,6 +49,61 @@ class CheckedDelegate(FakeDelegate):
 
 
 class Runs(RunCase):
+    def test_document_host_is_canonicalized_in_delegate_output_overlay(self):
+        for host in ("GHE.EXAMPLE.COM", "GitHub.com"):
+            with self.subTest(host=host):
+                role = self.cfg.roles["researcher"]
+                output = dict(role.run.output) | {"host": host}
+                self.cfg = replace(
+                    self.cfg,
+                    roles=dict(self.cfg.roles)
+                    | {"researcher": replace(role, run=replace(role.run, output=output))},
+                    docs=replace(self.cfg.docs, host=host.lower()),
+                )
+                owner, _ = self.start(delegate_cls=CapturedDelegate)
+                overlays = owner.delegate.accepted[2]["overlays"]
+                normalized = next(
+                    o["roles"]["researcher"]["output"]
+                    for o in overlays
+                    if "output" in o.get("roles", {}).get("researcher", {})
+                )
+                self.assertEqual(normalized, output | {"host": host.lower()})
+
+    def test_local_document_out_is_stable_and_separate_from_issue_workdir(self):
+        local_dir = self.cfg.work_dir + "/docs/researcher"
+        cfg = replace(self.cfg, docs=replace(self.cfg.docs, dirs={"researcher": local_dir}))
+        self.cfg = cfg
+        owner, _ = self.start(delegate_cls=CapturedDelegate)
+        out = owner.delegate.accepted[1].out
+        self.assertEqual(out, f"{local_dir}/document-TASK-1-{SID}.md")
+        with mock.patch.object(owner.delegate, "resume"):
+            owner.resume(input="revision")
+        self.assertEqual(owner.delegate.accepted[1].out, out)
+
+    def test_enterprise_build_host_fallback_reaches_delegate_overlay(self):
+        cfg = replace(self.cfg, docs=replace(self.cfg.docs, host="ghe.example.com"))
+        owner = LinearRun(
+            "TASK-1",
+            "Build",
+            cfg.issue_workdir("TASK-1"),
+            cfg=cfg,
+            role="engineer",
+            sid=SID,
+            client="fake",
+            delegate_cls=CapturedDelegate,
+        )
+        self.assertEqual(
+            owner.delegate.accepted[2]["overlays"][-1],
+            {
+                "roles": {
+                    "engineer": {
+                        "output": dict(cfg.roles["engineer"].run.output)
+                        | {"host": "ghe.example.com"}
+                    }
+                }
+            },
+        )
+
     def test_detach_sets_outer_once_and_preserves_the_provider_receipt(self):
         owner, record = self.start()
         with mock.patch.object(owner.delegate, "detach", return_value=record) as detach:

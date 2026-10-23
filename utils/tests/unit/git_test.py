@@ -89,6 +89,17 @@ class Retry(Case):
 
 
 class Parse(Case):
+    def test_local_origin_removes_clone_suffix_once(self):
+        clone = os.path.join(self.home, "clone")
+        os.makedirs(os.path.join(clone, ".git"))
+        for host in ("github.com", "ghe.example.com"):
+            with self.subTest(host=host):
+                run = unittest.mock.Mock(return_value=ok(f"git@{host}:acme/app.git.git\n"))
+                self.assertEqual(
+                    repos.resolve(clone, run=run),
+                    (repos.Repo(host, "acme", "app.git"), os.path.realpath(clone)),
+                )
+
     def test_strict_github_repo_slugs(self):
         cases = {
             "ophis/agent-pm": ("ophis", "agent-pm"),

@@ -1,6 +1,7 @@
 """First-claim candidate search at its Linear and gh boundaries (FR-29, FR-21, FR-30, NFR-3)."""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from agent_pm.orchestrator.engine import config, related
@@ -128,6 +129,25 @@ class Keywords(Case):
 
 
 class Search(Case):
+    def test_local_related_documents_have_file_references(self):
+        directory = Path(self.home) / "documents"
+        directory.mkdir()
+        path = directory / "queues.md"
+        path.write_text("Queues")
+        docs = Docs("", "", {"researcher": str(directory)})
+        refs = related._doc_refs(FakeRun([]), docs, ["queue"], {}, set())
+        self.assertEqual([(r.label, r.url) for r in refs], [(str(path), path.as_uri())])
+
+    def test_enterprise_pr_search_selects_host(self):
+        runner = FakeRun([(("env", "GH_HOST=ghe.example.com", "gh", "search", "prs"), ok("[]"))])
+        self.assertEqual(
+            related._pr_refs(
+                runner, Target("acme", "app", host="ghe.example.com"), ["queue"], {}, set()
+            ),
+            [],
+        )
+        self.assertIn("acme/app", runner.calls[0][0])
+
     def test_one_request_with_mentioned_ids(self):
         gql = Gql(found=[node("TASK-3")], named=[node("TASK-30"), node("TASK-3")])
         got = search(

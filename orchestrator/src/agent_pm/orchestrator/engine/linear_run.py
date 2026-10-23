@@ -45,6 +45,12 @@ class LinearRun:
         self.delegate_kind = delegate_kind or cfg.delegate_kind
         provider = delegate_cls or self.kind_cls(cfg, self.delegate_kind)
         overlays = (cfg.core,)
+        stage = config.TASKS.get(role)
+        output = cfg.roles[role].run.output if stage else {}
+        if stage and (stage.input == "build" or output["type"] == "github"):
+            host = cfg.repo_host(role)
+            if host != "github.com" or output.get("host"):
+                overlays += ({"roles": {role: {"output": dict(output) | {"host": host}}}},)
         if tier is not None:
             overlays += ({"roles": {role: {"tier": tier}}},)
         if role == "researcher":
@@ -63,6 +69,7 @@ class LinearRun:
                 resume=resume,
                 name=config.tui_name(role, issue, sid),
                 events=events,
+                out=cfg.docs.local_out(role, issue, sid),
             ),
             display=display,
             callback=["agent-pm-orchestrator", "writeback", "--issue", issue, "--workdir", workdir],

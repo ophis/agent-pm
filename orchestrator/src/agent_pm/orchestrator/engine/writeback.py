@@ -16,6 +16,7 @@ import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
+from pathlib import Path
 from traceback import format_exception
 
 from agent_pm.delegate import DelegateEvent, Outcome, Progress
@@ -71,6 +72,8 @@ class Context:
     # look each comment step up by its ref before posting it, as on resume: its event may
     # come again after the post landed and its ledger write was lost
     redelivered: bool = False
+    host: str = "github.com"
+    document: str | None = None
 
 
 LEDGER = "writeback.json"
@@ -110,6 +113,8 @@ def context(cfg, role, accounts: Accounts, *, ident, issue_id, sid, resume, proj
         repos=accounts.repos,
         target=target,
         harness=accounts.harness,
+        host=cfg.repo_host(role),
+        document=cfg.docs.local_out(role, ident, sid),
     )
 
 
@@ -316,7 +321,7 @@ def _url(ctx, url):
     if not url or TASKS[ctx.role].input != "build":
         return url
     if ctx.target and url.lower().startswith(
-        f"https://github.com/{ctx.target[0]}/{ctx.target[1]}/".lower()
+        f"https://{ctx.host}/{ctx.target[0]}/{ctx.target[1]}/".lower()
     ):
         return url
     log(
@@ -340,6 +345,8 @@ def finish(ctx, outcome: Outcome, *, steps="") -> bool:
 
 def _completion_body(ctx, o):
     task, url = TASKS[ctx.role], _url(ctx, o.url)
+    if ctx.document:
+        url = Path(ctx.document).as_uri() if o.status == OutcomeStatus.DONE else ""
     if o.status == OutcomeStatus.DONE:
         lead, text, state = task.done, o.summary, "in_review"
         if task.input == "build" and text:
@@ -430,6 +437,7 @@ def _finish(ctx, o, steps=""):
     if (
         o.status == OutcomeStatus.DONE
         and url
+        and not ctx.document
         and _step(ctx, f"attach:{url}", lambda: _attach(ctx, url, o.title, attached))
     ):
         return False
