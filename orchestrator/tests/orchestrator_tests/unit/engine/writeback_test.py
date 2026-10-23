@@ -656,6 +656,63 @@ ACCOUNTS = Accounts(
 
 
 class WritebackContext(run_fixtures.Base):
+    def test_context_resolves_build_host_fallback_and_explicit_override(self):
+        cfg = config.load()
+        cfg = replace(cfg, docs=replace(cfg.docs, host="ghe.example.com"))
+        for explicit, expected in (
+            (None, "ghe.example.com"),
+            ("github.com", "github.com"),
+            ("build.example.com", "build.example.com"),
+        ):
+            with self.subTest(explicit=explicit):
+                role = cfg.roles["engineer"]
+                output = {"type": "pull-request"} | ({"host": explicit} if explicit else {})
+                current = replace(
+                    cfg,
+                    roles=dict(cfg.roles)
+                    | {"engineer": replace(role, run=replace(role.run, output=output))},
+                )
+                ctx = writeback.context(
+                    current,
+                    "engineer",
+                    ACCOUNTS,
+                    ident=ID,
+                    issue_id=UUID,
+                    sid=SID,
+                    resume=False,
+                    project=PROJECT,
+                    target=TARGET,
+                )
+                self.assertEqual(ctx.host, expected)
+                self.assertEqual(
+                    writeback._url(ctx, f"https://{expected}/ophis/agent-pm/pull/1"),
+                    f"https://{expected}/ophis/agent-pm/pull/1",
+                )
+
+    def test_local_document_reference_is_constructed_for_launch_and_recovery(self):
+        cfg = config.load()
+        directory = os.path.join(cfg.work_dir, "docs", "researcher")
+        cfg = replace(cfg, docs=replace(cfg.docs, dirs={"researcher": directory}))
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                ctx = writeback.context(
+                    cfg,
+                    "researcher",
+                    ACCOUNTS,
+                    ident=ID,
+                    issue_id=UUID,
+                    sid=SID,
+                    resume=resume,
+                    project=PROJECT,
+                    target=None,
+                )
+                body, _, url = writeback._completion_body(
+                    ctx, Outcome(status="done", title="Report", summary="Ready.")
+                )
+                expected = Path(directory, f"document-{ID}-{SID}.md").as_uri()
+                self.assertEqual(url, expected)
+                self.assertIn(expected, body)
+
     def test_the_one_context_of_a_role_from_its_accounts(self):
         cfg = config.load()
         for resume, target in ((False, TARGET), (True, None)):

@@ -98,7 +98,7 @@ flowchart LR
     D -->|no| P[github.com]
 ```
 
-To use a different target host, set the build role's complete output table, for example `type = "pull-request"` and `host = "code.example.com"`. Bare `Repo: acme/app` and project mappings use the target host; HTTPS and `git@host:` Repo values must match it. Authenticate `gh` for each host on the board machine. Docker Host enterprise credentials and broker tokens need separate support.
+To use a different target host, set the build role's complete output table, for example `type = "pull-request"` and `host = "code.example.com"`. Configured hosts take precedence over inherited `GH_HOST`. Bare `Repo: acme/app` and project mappings use the target host; HTTPS and `git@host:` Repo values must match it. Authenticate `gh` for each host on the board machine. Docker Host enterprise credentials and broker tokens need separate support.
 
 `[orchestrator.local_clones]` accepts `"acme/app" = "~/src/app"` on the common build target host, or `"code.example.com/acme/app" = "~/src/app"` to identify a host explicitly. Use qualified keys when build roles have different hosts. Clone origin checks and reuse match both host and repository.
 

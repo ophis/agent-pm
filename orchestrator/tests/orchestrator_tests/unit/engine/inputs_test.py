@@ -237,6 +237,13 @@ class LocalDocuments(Case):
         src = inputs.gather(issue(outside.as_uri()), "engineer", self.docs, run=self.run)
         self.assertEqual(src.docs, ())
 
+    def test_malformed_file_uri_is_ignored_instead_of_aborting_gather(self):
+        url = "file://[broken/a.md"
+        self.assertIsNone(inputs.doc_path(url, self.docs))
+        self.assertEqual(
+            inputs.gather(issue(links=(Link(url),)), "engineer", self.docs, run=self.run).docs, ()
+        )
+
     def test_confined_reads_reject_symlink_special_file_size_and_encoding(self):
         outside = Path(self.home) / "secret.md"
         outside.write_text("secret")
@@ -266,6 +273,23 @@ class LocalDocuments(Case):
 
 
 class BuildInputs(Case):
+    def test_enterprise_earlier_version_uses_host_for_listing_and_read(self):
+        docs = replace(DOCS, host="ghe.example.com")
+        path = "Product Design/2026-10-23-RES-4-spec.md"
+        run = Gh(
+            {
+                endpoint("Product%20Design"): listing("2026-10-23-RES-4-spec.md"),
+                endpoint("Product%20Design/2026-10-23-RES-4-spec.md"): ok("# Enterprise design"),
+            }
+        )
+        src = inputs.gather(issue(), "pm", docs, run=run)
+        self.assertEqual((src.earlier.path, src.earlier.text), (path, "# Enterprise design"))
+        self.assertEqual(
+            run.calls[0],
+            (["gh", "api", "--hostname", "ghe.example.com", endpoint("Product%20Design")], SHORT),
+        )
+        self.assertIn("--hostname", run.calls[1][0])
+
     def test_enterprise_document_reads_and_repo_input(self):
         docs = replace(DOCS, host="ghe.example.com")
         url = "https://ghe.example.com/ophis/private_docs/blob/main/Product%20Design/prd.md"

@@ -160,7 +160,10 @@ def path():
 
 
 def shell(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
-    return utils.sh(argv, timeout, env={**os.environ, "PATH": path()})
+    env = {**os.environ, "PATH": path()}
+    if argv[:1] == ["gh"] and "--hostname" not in argv:
+        env["GH_HOST"] = "github.com"
+    return utils.sh(argv, timeout, env=env)
 
 
 def writable(work):
@@ -186,7 +189,7 @@ def clone_error(clone, slug, *, run=None, host="github.com"):
     ) as e:  # UnicodeDecodeError, from non-UTF-8 git output, is a ValueError
         return f"git: {e}"
     expected = (
-        utils.Repo.parse(slug)
+        utils.Repo(*slug.split("/"))
         if slug.count("/") == 2
         else utils.Repo(host.lower(), *slug.split("/"))
     )
@@ -475,8 +478,11 @@ def _local_clones(cfg):
     seen = {}
     for k, v in clones.items():
         try:
+            parts = k.split("/")
             valid = bool(utils.repo_slug(k)) or (
-                k.count("/") == 2 and utils.Repo.parse(k).slug.lower() == k.lower()
+                len(parts) == 3
+                and bool(utils.repo_slug("/".join(parts[1:])))
+                and utils.Repo.parse(f"{parts[0]}/owner/repo").host == parts[0].lower()
             )
         except utils.Invalid:
             valid = False
@@ -661,7 +667,11 @@ def _clone_origins(clones, roles, docs):
                 f"orchestrator/config.toml: local_clones.{key}: use host/owner/name when build hosts differ"
             )
         host = next(iter(hosts), docs.host)
-        repo = utils.Repo(host, *key.split("/")) if key.count("/") == 1 else utils.Repo.parse(key)
+        repo = (
+            utils.Repo(host, *key.split("/"))
+            if key.count("/") == 1
+            else utils.Repo(*key.split("/"))
+        )
         canonical = repo.slug.lower()
         if canonical in seen:
             raise ConfigError(

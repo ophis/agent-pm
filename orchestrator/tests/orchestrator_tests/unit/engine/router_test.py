@@ -14,6 +14,7 @@ import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
@@ -25,11 +26,13 @@ from agent_pm.orchestrator.engine import (
     related,
     router,
     runs,
+    target,
 )
 from agent_pm.orchestrator.engine import gate as quota
 from agent_pm.orchestrator.engine.flow.types import IssueState, Pick
 from agent_pm.orchestrator.engine.types import (
     LinearError,
+    Related,
     Spec,
     TrackerFileError,
     TrackerKind,
@@ -3167,6 +3170,48 @@ class RunLaunching(OuterBase):
     """FR-45, FR-47's resume check: the outer reads the issue, checks its repo, renders its input,
     records the run and detaches its LinearRun (FR-25).
     """
+
+    def test_enterprise_target_host_reaches_router_checks_and_delegate_input(self):
+        docs = '\n[core.roles.researcher.output]\ntype = "github"\nhost = "ghe.example.com"\nrepo = "ophis/private_docs"\nbranch = "main"\ndir = "Research/"\n[core.roles.pm.output]\ntype = "local"\n'
+        for explicit, expected in (
+            (None, "ghe.example.com"),
+            ("github.com", "github.com"),
+            ("build.example.com", "build.example.com"),
+        ):
+            with self.subTest(explicit=explicit):
+                output = '\n[core.roles.engineer.output]\ntype = "pull-request"\n' + (
+                    f'host = "{explicit}"\n' if explicit else ""
+                )
+                self.write_config(OUTER + docs + output)
+                with (
+                    mock.patch.object(
+                        target,
+                        "check",
+                        return_value=target.Target("acme", "app", "TASK-7-build", host=expected),
+                    ) as check,
+                    mock.patch.object(inputs, "gather", return_value=inputs.Sources((), None)),
+                    mock.patch.object(related, "search", return_value=Related()),
+                ):
+                    self.assertEqual(self.outer(), 0)
+                self.assertEqual(check.call_args.kwargs["host"], expected)
+                spec = self.api.detached[-1][1]
+                self.assertIn(
+                    "Repo: " + ("acme/app" if expected == "github.com" else expected + "/acme/app"),
+                    spec.input,
+                )
+
+    def test_router_inlines_local_prd_from_configured_document_directory(self):
+        self.write_config(OUTER + '\n[core.roles.pm.output]\ntype = "local"\n')
+        directory = Path(self.cfg().docs.dirs["pm"])
+        directory.mkdir(parents=True)
+        path = directory / "design.md"
+        path.write_text("# Router local PRD")
+        self.gql.issue["description"] = path.as_uri()
+        with mock.patch.object(related, "search", return_value=Related()):
+            self.assertEqual(self.outer(), 0)
+        spec = self.api.detached[-1][1]
+        self.assertIn("# Router local PRD", spec.input)
+        self.assertIn(path.as_uri(), spec.input)
 
     def test_build_detaches_its_linear_run_after_its_start_row(self):
         self.assertEqual(self.outer(), 0)

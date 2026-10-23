@@ -73,7 +73,10 @@ def doc_path(url, docs) -> str | None:
     if CONTROL.search(url):
         return None
     if url.startswith(("file:", "/")):
-        parsed = urlsplit(url)
+        try:
+            parsed = urlsplit(url)
+        except ValueError:
+            return None
         if parsed.netloc or parsed.scheme not in ("", "file"):
             return None
         path = unquote(parsed.path)
