@@ -105,6 +105,9 @@ backup from before the first plugin install, including the user's original provi
 edits made after that backup revert. A configuration created by this installation stays recorded as
 created across upgrades and is removed with the plugin's added files (`node_modules`, `package.json`,
 `package-lock.json`, `.gitignore`), including after repeated install/cleanup cycles. Preexisting files stay.
+The cleanup list also includes newly created OpenTUI data, gh cache/state, uv cache and
+`~/.homebrew/trust.json`; it respects `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and
+`UV_CACHE_DIR` for those tool directories. Existing tool directories and trust files are kept.
 
 Set each provider's `context` and `[clients.opencode] ollama_context` to the server's real context window (Ollama's `OLLAMA_CONTEXT_LENGTH`): a smaller value compacts early, a larger one lets a request overflow. Both default to 65536.
 

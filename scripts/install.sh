@@ -1111,6 +1111,7 @@ opencode_install() {
   formula node
   record_dir "$opencode_prefix"
   record_dir "${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
+  record_dir "${XDG_DATA_HOME:-$HOME/.local/share}/opentui"
   record_dir "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
   record_dir "${XDG_STATE_HOME:-$HOME/.local/state}/opencode"
   record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/opencode"
@@ -2275,6 +2276,12 @@ main() {
   exec 3<>"$(terminal)"
   trap on_exit EXIT
   [ -d "$HOME/.agent-pm" ] || ledger_add dir "$HOME/.agent-pm"
+  # Record tool state before Homebrew, logins or launcher installation can create it.
+  record_dir "$HOME/.homebrew"
+  record_file "$HOME/.homebrew/trust.json"
+  record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/gh"
+  record_dir "${XDG_STATE_HOME:-$HOME/.local/state}/gh"
+  record_dir "${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv}"
   # An installed board already has Python; reject deselecting it with job flags before privileged work.
   if [ -n "$jobs_flag" ] && [ "$(state_get board)" = yes ]; then
     PATH="${HOMEBREW_PREFIX:-$root/opt/homebrew}/bin:$PATH" answers

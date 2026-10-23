@@ -120,6 +120,9 @@ chmod 755 "$target/agent-pm-broker"
 CTMUX = """#!/bin/sh
 echo "ctmux $*" >> "$LOG"
 mkdir -p "$HOME/.agent-pm/bin"
+uv_cache=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv}
+mkdir -p "$uv_cache"
+printf 'fake uv cache' > "$uv_cache/installer-cache"
 for n in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-orchestrator; do
   printf '#!/bin/sh\\n' > "$HOME/.agent-pm/bin/$n"
   chmod 755 "$HOME/.agent-pm/bin/$n"
@@ -1714,6 +1717,58 @@ class InstallTest(Case):
         self.assert_ok(self.cleanup("--yes"))
         self.assertFalse(Path(self.agent_pm).exists())
 
+    def tool_artifacts(self):
+        return [
+            Path(self.env.get("XDG_DATA_HOME", Path(self.home, ".local/share")), "opentui"),
+            Path(self.env.get("XDG_CACHE_HOME", Path(self.home, ".cache")), "gh"),
+            Path(self.env.get("XDG_STATE_HOME", Path(self.home, ".local/state")), "gh"),
+            Path(
+                self.env.get("UV_CACHE_DIR")
+                or Path(self.env.get("XDG_CACHE_HOME", Path(self.home, ".cache")), "uv")
+            ),
+            Path(self.home, ".homebrew/trust.json"),
+        ]
+
+    def test_cleanup_tracks_tool_artifacts_and_lists_them(self):
+        for cycle in range(2):
+            with self.subTest(cycle=cycle):
+                self.assert_ok(self.opencode_only())
+                for path in self.tool_artifacts():
+                    self.assertTrue(path.exists(), str(path))
+                    kind = "file" if path.name == "trust.json" else "dir"
+                    self.assertIn(f"{kind}\t{path}", self.ledger())
+                result = self.cleanup("--yes")
+                self.assert_ok(result)
+                for path in self.tool_artifacts():
+                    self.assertIn(str(path), result.tty)
+                    self.assertFalse(path.exists(), str(path))
+                self.assertFalse(Path(self.home, ".homebrew").exists())
+
+    def test_cleanup_preserves_preexisting_tool_artifacts(self):
+        sentinels = []
+        for path in self.tool_artifacts():
+            if path.name != "trust.json":
+                path.mkdir(parents=True)
+                path = path / "user-data"
+            else:
+                path.parent.mkdir(parents=True)
+            path.write_text("user data")
+            sentinels.append(path)
+        self.assert_ok(self.opencode_only())
+        for path in self.tool_artifacts():
+            self.assertFalse(any(record.endswith("\t" + str(path)) for record in self.ledger()))
+        self.assert_ok(self.cleanup("--yes"))
+        for path in sentinels:
+            self.assertEqual(path.read_text(), "user data")
+
+    def test_cleanup_tracks_xdg_tool_artifacts_and_uv_override(self):
+        for key in ("XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "UV_CACHE_DIR"):
+            self.env[key] = str(Path(self.home, key.lower()))
+        self.assert_ok(self.opencode_only())
+        self.assert_ok(self.cleanup("--yes"))
+        for path in self.tool_artifacts():
+            self.assertFalse(path.exists(), str(path))
+
     def test_opencode_cleanup_restores_legacy_backup_without_installed_record(self):
         path = Path(self.home, ".config/opencode/opencode.jsonc")
         path.parent.mkdir(parents=True)
@@ -3040,6 +3095,11 @@ class InstallTest(Case):
             self.ledger(),
             [
                 f"dir\t{h}/.agent-pm",
+                f"dir\t{h}/.homebrew",
+                f"file\t{h}/.homebrew/trust.json",
+                f"dir\t{h}/.cache/gh",
+                f"dir\t{h}/.local/state/gh",
+                f"dir\t{h}/.cache/uv",
                 f"homebrew\t{self.root}/opt/homebrew",
                 "clt",
                 f"profile-file\t{h}/.zprofile",
