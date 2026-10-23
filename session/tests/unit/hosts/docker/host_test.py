@@ -623,7 +623,7 @@ class StartTest(Base):
         super().setUp()
         self.home_dir = os.path.join(self.state, "agent")
         self.docker.replies = {
-            ("tmux", "new-session"): (0, PROCESS + "\n", ""),
+            ("tmux", "start-server"): (0, PROCESS + "\n", ""),
             ("tmux", "display-message"): pane(),
         }
         self.supervisor = mock.Mock(pid=4321)
@@ -704,7 +704,7 @@ class StartTest(Base):
                 ["exec", "-i", CONTAINER, "test", "-S"],
                 "supervisor",
                 ["exec", "-i", CONTAINER, PYTHON, "-I"],
-                ["exec", "-i", CONTAINER, "tmux", "new-session"],
+                ["exec", "-i", CONTAINER, "tmux", "start-server"],
                 ["exec", "-i", CONTAINER, "tmux", "display-message"],
             ],
         )
@@ -810,7 +810,7 @@ class StartTest(Base):
         )
         new = self.docker.execs()[3]
         self.assertEqual(
-            new[new.index("--") : new.index(";")],
+            new[new.index("--") : new.index(";", new.index("--"))],
             ["--", PYTHON, "-I", "-c", tmux_cli.RELAUNCH, STAGED],
         )
         self.assertEqual(new[new.index("-c") + 1], self.cwd)
@@ -853,6 +853,30 @@ class StartTest(Base):
         kw = self.popen_mock.call_args.kwargs
         self.assertTrue(kw["start_new_session"])
         self.assertFalse(set(CLEARED) & kw["env"].keys())
+
+    def test_scroll_settings_reach_container_before_its_first_pane_without_rebinding_mouse(self):
+        self.start()
+        (new,) = [call for call in self.docker.execs() if "new-session" in call]
+        self.assertEqual(
+            new[: new.index("new-session")],
+            [
+                "tmux",
+                "start-server",
+                ";",
+                "set-option",
+                "-g",
+                "history-limit",
+                "50000",
+                ";",
+                "set-option",
+                "-g",
+                "mouse",
+                "on",
+                ";",
+            ],
+        )
+        self.assertNotIn("bind-key", new)
+        self.assertNotIn("unbind-key", new)
 
     def test_a_min_width_reaches_the_container_tmux(self):
         for case, width, floored in (("opencode", "40", True), ("claude", None, False)):
@@ -911,7 +935,7 @@ class StartTest(Base):
                 (new,) = [call for call in self.docker.execs() if "new-session" in call]
                 self.assertLess(len("\0".join(new).encode()), 4096)
                 self.assertEqual(
-                    new[new.index("--") : new.index(";")],
+                    new[new.index("--") : new.index(";", new.index("--"))],
                     ["--", PYTHON, "-I", "-c", tmux_cli.RELAUNCH, STAGED],
                 )
                 (staged,) = self.docker.staged
@@ -1322,10 +1346,10 @@ class StartTest(Base):
 
     def test_failure_after_start_rolls_back(self):
         for replies in (
-            {("tmux", "new-session"): (1, "", "boom")},
+            {("tmux", "start-server"): (1, "", "boom")},
             {("test",): (1, "", "")},
             {
-                ("tmux", "new-session"): (0, PROCESS, ""),
+                ("tmux", "start-server"): (0, PROCESS, ""),
                 ("tmux", "display-message"): (0, "1 1 \n", ""),
             },
         ):
