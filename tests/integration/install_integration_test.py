@@ -93,6 +93,7 @@ SHARED = (
     "ask_yn",
     "under_home",
     "ledger_valid",
+    "agent_tree_find",
     "sudo_once",
     "sudo_end",
     "terminal",
@@ -1920,6 +1921,26 @@ exec /bin/rm "$@"
         self.assertEqual(result.code, 1, result.stderr)
         self.assert_ok(self.cleanup("--yes"))
         self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_cleanup_keeps_board_with_glob_characters_in_home(self):
+        home = Path(self.home, "user[1]*?")
+        home.mkdir()
+        self.env["HOME"] = str(home)
+        self.root = home / "root"
+        (self.root / "dev").mkdir(parents=True)
+        self.env["AGENT_PM_INSTALL_ROOT"] = str(self.root)
+        self.assert_ok(self.fresh("--clients", "claude", "--no-docker"))
+        root = home / ".agent-pm"
+        board = root / "board"
+        board.mkdir()
+        issue = board / "keep.md"
+        issue.write_text("board data")
+        runtime = root / "runtime.txt"
+        runtime.write_text("runtime data")
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(issue.read_text(), "board data")
+        self.assertFalse(runtime.exists())
+        self.assertEqual({path.name for path in root.iterdir()}, {"board", "install"})
 
     def tool_artifacts(self):
         return [

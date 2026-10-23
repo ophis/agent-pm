@@ -246,7 +246,7 @@ agent_tree_snapshot() {
   local path
   (
     umask 077
-    find -H "$HOME/.agent-pm" \( -path "$state_dir" -o -path "$HOME/.agent-pm/board" \) -prune -o -print0 >"$state_dir/agent-tree.raw"
+    agent_tree_find >"$state_dir/agent-tree.raw"
     while IFS= read -r -d '' path; do
       LC_ALL=C printf '%q\n' "$path"
     done <"$state_dir/agent-tree.raw" >"$state_dir/agent-tree.unsorted"
@@ -254,6 +254,15 @@ agent_tree_snapshot() {
   )
   mv "$state_dir/agent-tree.paths.tmp" "$state_dir/agent-tree.paths"
   rm -f "$state_dir/agent-tree.raw" "$state_dir/agent-tree.unsorted"
+}
+
+# Shared with install-cleanup.sh; find -path consumes a pattern even when the shell argument is quoted.
+agent_tree_find() {
+  local pattern=$HOME/.agent-pm char
+  for char in '\' '*' '?' '[' ']'; do
+    pattern=${pattern//"$char"/\\$char}
+  done
+  find -H "$HOME/.agent-pm" \( -path "$pattern/install" -o -path "$pattern/board" \) -prune -o -print0
 }
 
 # Exit 0 when the fields are a Ledger record the cleanup can act on.

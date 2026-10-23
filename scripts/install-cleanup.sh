@@ -77,6 +77,15 @@ under_home() {
   return 0
 }
 
+# Shared with install-cleanup.sh; find -path consumes a pattern even when the shell argument is quoted.
+agent_tree_find() {
+  local pattern=$HOME/.agent-pm char
+  for char in '\' '*' '?' '[' ']'; do
+    pattern=${pattern//"$char"/\\$char}
+  done
+  find -H "$HOME/.agent-pm" \( -path "$pattern/install" -o -path "$pattern/board" \) -prune -o -print0
+}
+
 # Exit 0 when the fields are a Ledger record the cleanup can act on.
 ledger_valid() {
   local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
@@ -744,7 +753,7 @@ agent_tree() {
   grep -qxF -- "$root_key" "$state_dir/agent-tree.paths" || die "invalid agent-pm path inventory; records retained"
   (
     umask 077
-    find -H "$HOME/.agent-pm" \( -path "$state_dir" -o -path "$HOME/.agent-pm/board" \) -prune -o -print0 >"$state_dir/agent-tree.current"
+    agent_tree_find >"$state_dir/agent-tree.current"
   ) || die "cannot inventory runtime data; records retained"
   : >"$state_dir/agent-tree.index" || die "cannot write runtime inventory; records retained"
   while IFS= read -r -d '' path; do
