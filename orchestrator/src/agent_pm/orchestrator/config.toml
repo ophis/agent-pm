@@ -78,6 +78,7 @@ max_runs = 3
 # local: max_runs = 1
 
 # Local clones; optional, an unlisted repo gets a fresh clone.
+# Host-qualified keys and host defaults: docs/board.md's Document destinations and GitHub hosts.
 #   "<owner>/<name>"  local: "<path>" (absolute or ~) of the repo's local clone. The input's Repo: line names the path,
 #                     so the agent run gets a git worktree of the clone; load() checks it is a clone of that
 #                     repo; empty table → none

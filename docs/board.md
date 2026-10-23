@@ -63,6 +63,45 @@ launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>
 rm ~/Library/LaunchAgents/com.ophis.agent-pm.<job>.plist
 ```
 
+### Document destinations and GitHub hosts
+
+Set document roles' `[output]` in `[delegate.roles.<role>.output]`, or under `[orchestrator.core.roles.<role>.output]` for board runs only. An output overlay replaces the whole table: include `type` and every field its destination needs.
+
+| `type` | Document storage and references |
+|---|---|
+| `github` | All GitHub document roles share `host`, `repo` and `branch`; each has its own relative `dir`. `host` defaults to `github.com`. |
+| `local`, `orchestrator` | Delegate saves each run to `<work_dir>/docs/<role>/document-<issue>-<sid>.md`; resumes reuse it. Completion comments carry a `file://` reference instead of an external attachment. Inherited `repo`, `branch` and `dir` are unused. |
+
+Local and GitHub document roles can coexist. For example:
+
+```toml
+[orchestrator.core.roles.researcher.output]
+type = "github"
+host = "ghe.example.com"
+repo = "acme/notes"
+branch = "main"
+dir = "Research/"
+
+[orchestrator.core.roles.pm.output]
+type = "local"
+```
+
+Local references in completion comments survive promotion and are inlined into the next role's input, including the build's PRD. Linked absolute paths also work inside configured local document directories. Reads accept regular UTF-8 `.md` files up to 1,000,000 bytes and reject traversal or symlink escape. Earlier local versions use modification time. Local files remain on the board host and survive issue-workdir cleanup; another machine cannot open their references.
+
+The **target host** is resolved separately for each build role:
+
+```mermaid
+flowchart LR
+    B{Build output.host?} -->|yes| E[Explicit host]
+    B -->|no| D{GitHub document host?}
+    D -->|yes| G[Document host]
+    D -->|no| P[github.com]
+```
+
+To use a different target host, set the build role's complete output table, for example `type = "pull-request"` and `host = "code.example.com"`. Bare `Repo: acme/app` and project mappings use the target host; HTTPS and `git@host:` Repo values must match it. Authenticate `gh` for each host on the board machine. Docker Host enterprise credentials and broker tokens need separate support.
+
+`[orchestrator.local_clones]` accepts `"acme/app" = "~/src/app"` on the common build target host, or `"code.example.com/acme/app" = "~/src/app"` to identify a host explicitly. Use qualified keys when build roles have different hosts. Clone origin checks and reuse match both host and repository.
+
 ## Using the board
 
 ```mermaid
@@ -84,8 +123,8 @@ flowchart LR
 
 - **New work:** a Todo issue in the product's project, assigned to a role account. The description is the brief, or an engineer issue's requirement. Add `Repo: <owner>/<name>` if the repo is not the project's `[orchestrator.linear.project_repos]` entry.
 - **Order work:** the router claims by priority, then later role, then oldest. A blocked issue waits until its blockers are Done, Canceled or Duplicate.
-- **Duplicates:** on an issue's first claim the router searches the team's issues (archived too), the docs repo and the target repo's merged PRs by its title words and the issue ids its description names, and lists the matches, minus its Handoff chain, at the end of the agent's input under `## Related work`. A failed search logs `related-skip` and the run goes on.
-- **Linked documents:** the agent's input inlines the docs-repo documents an issue links, in order, up to 50,000 bytes in all; each one that no longer fits is listed by path and URL for the agent to read. A PRD and an earlier version are always inlined.
+- **Duplicates:** on an issue's first claim the router searches the team's issues (archived too), configured documents and the target repo's merged PRs by its title words and the issue ids its description names, and lists the matches, minus its Handoff chain, at the end of the agent's input under `## Related work`. A failed search logs `related-skip` and the run goes on.
+- **Linked documents:** the agent's input inlines [configured documents](#document-destinations-and-github-hosts) an issue links, in order, up to 50,000 bytes in all; each one that no longer fits is listed by path and URL for the agent to read. A PRD and an earlier version are always inlined.
 - **Approve:** move to Handoff and comment what's next. After 10 minutes (move it out of Handoff to undo), promote creates the next role's issue and marks this one Done.
 - **Revise:** comment and move back to Todo. The agent resumes where it left off. On an engineer issue your PR comments and reviews count too. After 4 attempts the issue goes to In Review; moving it back to Todo restarts the count.
 - **Who counts as you:** every Linear account but the harness account, the role accounts and Linear automation, the manager included (its `agent-pm-orchestrator issue` commands act as `linear.manager_key`'s account): its comments are instructions and its moves to Todo restart the attempt count. Comments without a user, such as the GitHub integration's, are ignored. `linear.human_members` only picks who is subscribed on In Review. Anyone who can comment on or move the team's issues (members, guests, synced users) can so instruct agents: keep the team's membership and guest access tight.
