@@ -273,6 +273,16 @@ class LocalDocuments(Case):
 
 
 class BuildInputs(Case):
+    def test_document_host_and_scheme_case_do_not_change_discovery(self):
+        docs = replace(DOCS, host="ghe.example.com")
+        path = "Product Design/prd.md"
+        url = "HTTPS://GHE.EXAMPLE.COM/ophis/private_docs/blob/main/Product%20Design/prd.md"
+        self.assertEqual(inputs.doc_path(url, docs), path)
+        self.assertIsNone(inputs.doc_path(url.replace("/main/", "/MAIN/"), docs))
+        run = Gh({endpoint("Product%20Design/prd.md"): ok("# Case-preserving PRD")})
+        src = inputs.gather(issue(url), "engineer", docs, run=run)
+        self.assertEqual(src.docs[0].text, "# Case-preserving PRD")
+
     def test_enterprise_earlier_version_uses_host_for_listing_and_read(self):
         docs = replace(DOCS, host="ghe.example.com")
         path = "Product Design/2026-10-23-RES-4-spec.md"

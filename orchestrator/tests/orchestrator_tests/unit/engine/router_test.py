@@ -26,13 +26,11 @@ from agent_pm.orchestrator.engine import (
     related,
     router,
     runs,
-    target,
 )
 from agent_pm.orchestrator.engine import gate as quota
 from agent_pm.orchestrator.engine.flow.types import IssueState, Pick
 from agent_pm.orchestrator.engine.types import (
     LinearError,
-    Related,
     Spec,
     TrackerFileError,
     TrackerKind,
@@ -3183,20 +3181,43 @@ class RunLaunching(OuterBase):
                     f'host = "{explicit}"\n' if explicit else ""
                 )
                 self.write_config(OUTER + docs + output)
-                with (
-                    mock.patch.object(
-                        target,
-                        "check",
-                        return_value=target.Target("acme", "app", "TASK-7-build", host=expected),
-                    ) as check,
-                    mock.patch.object(inputs, "gather", return_value=inputs.Sources((), None)),
-                    mock.patch.object(related, "search", return_value=Related()),
-                ):
-                    self.assertEqual(self.outer(), 0)
-                self.assertEqual(check.call_args.kwargs["host"], expected)
+                api = (
+                    ("gh", "api")
+                    + (() if expected == "github.com" else ("--hostname", expected))
+                    + ("repos/ophis/agent-pm",)
+                )
+                search = (() if expected == "github.com" else ("env", f"GH_HOST={expected}")) + (
+                    "gh",
+                    "search",
+                    "prs",
+                )
+                self.run_.calls.clear()
+                self.run_.table = [
+                    (api, ENG_RUN[0][1]),
+                    (("git",), ok()),
+                    (
+                        (
+                            "gh",
+                            "api",
+                            "--hostname",
+                            "ghe.example.com",
+                            "repos/ophis/private_docs/contents/Research?ref=main",
+                        ),
+                        ok("[]"),
+                    ),
+                    (search, ok("[]")),
+                ]
+                self.assertEqual(self.outer(), 0)
+                self.assertEqual(self.run_.calls[0], (api, SHORT))
+                self.assertIn(f"https://{expected}/Ophis/Agent-PM.git", self.run_.calls[1][0])
                 spec = self.api.detached[-1][1]
                 self.assertIn(
-                    "Repo: " + ("acme/app" if expected == "github.com" else expected + "/acme/app"),
+                    "Repo: "
+                    + (
+                        "Ophis/Agent-PM"
+                        if expected == "github.com"
+                        else expected + "/Ophis/Agent-PM"
+                    ),
                     spec.input,
                 )
 
@@ -3207,8 +3228,7 @@ class RunLaunching(OuterBase):
         path = directory / "design.md"
         path.write_text("# Router local PRD")
         self.gql.issue["description"] = path.as_uri()
-        with mock.patch.object(related, "search", return_value=Related()):
-            self.assertEqual(self.outer(), 0)
+        self.assertEqual(self.outer(), 0)
         spec = self.api.detached[-1][1]
         self.assertIn("# Router local PRD", spec.input)
         self.assertIn(path.as_uri(), spec.input)

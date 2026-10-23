@@ -46,9 +46,11 @@ class LinearRun:
         provider = delegate_cls or self.kind_cls(cfg, self.delegate_kind)
         overlays = (cfg.core,)
         stage = config.TASKS.get(role)
-        if stage and stage.input == "build" and cfg.repo_host(role) != "github.com":
-            output = dict(cfg.roles[role].run.output) | {"host": cfg.repo_host(role)}
-            overlays += ({"roles": {role: {"output": output}}},)
+        output = cfg.roles[role].run.output if stage else {}
+        if stage and (stage.input == "build" or output["type"] == "github"):
+            host = cfg.repo_host(role)
+            if host != "github.com" or output.get("host"):
+                overlays += ({"roles": {role: {"output": dict(output) | {"host": host}}}},)
         if tier is not None:
             overlays += ({"roles": {role: {"tier": tier}}},)
         if role == "researcher":

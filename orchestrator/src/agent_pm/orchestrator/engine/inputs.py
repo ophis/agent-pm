@@ -64,7 +64,7 @@ PRECEDENCE = {
 def _link_re(docs):
     # the path ends at the first raw `#` or `?` (GitHub percent-encodes real ones)
     return re.compile(
-        rf"https://{re.escape(docs.host)}/{re.escape(docs.repo)}/blob/{re.escape(docs.branch)}/([^\s)>\]`#?]*)"
+        rf"(?i:https://{re.escape(docs.host)})/{re.escape(docs.repo)}/blob/{re.escape(docs.branch)}/([^\s)>\]`#?]*)"
         r"(?:[#?][^\s)>\]`]*)?"
     )
 

@@ -150,7 +150,7 @@ def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
     if slug is None:
         raise Invalid(f"{clone}: no origin URL naming host/owner/name")
     repo = Repo.parse(slug)
-    # url_slug already removed the clone suffix.
+    # url_slug removed the clone suffix.
     return Repo(repo.host, repo.owner, slug.rsplit("/", 1)[1]), clone
 
 
