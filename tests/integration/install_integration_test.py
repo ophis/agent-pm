@@ -1873,9 +1873,40 @@ exec /bin/rm "$@"
         for _ in range(2):
             self.assert_ok(self.cleanup("--yes"))
             self.assertEqual(original.read_text(), "preexisting user data")
+        second = Path(self.agent_pm, "second.txt")
+        second.write_text("user data before next install")
+        self.assert_ok(self.opencode_only())
+        self.runtime_files()
+        for _ in range(2):
+            self.assert_ok(self.cleanup("--yes"))
+            self.assertEqual(original.read_text(), "preexisting user data")
+            self.assertEqual(second.read_text(), "user data before next install")
         original.unlink()
+        second.unlink()
         self.assert_ok(self.cleanup("--yes"))
         self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_failed_baseline_refresh_preserves_user_files_until_install_retry(self):
+        original = self.user_file_after_kept_board()
+        self.assert_ok(self.cleanup("--yes"))
+        second = Path(self.agent_pm, "second.txt")
+        second.write_text("user data before next install")
+        find = self.bin / "find"
+        find.unlink()
+        executable(find, "#!/bin/sh\nexit 1\n")
+        result = self.run_install("--clients", "claude", "--no-docker")
+        self.assertEqual(result.code, 1, result.stderr)
+        result = self.run_install("--yes", script=CLEANUP)
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn("path inventory is incomplete", result.stderr)
+        self.assertEqual(original.read_text(), "preexisting user data")
+        self.assertEqual(second.read_text(), "user data before next install")
+        find.unlink()
+        find.symlink_to(shutil.which("find"))
+        self.assert_ok(self.opencode_only())
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(original.read_text(), "preexisting user data")
+        self.assertEqual(second.read_text(), "user data before next install")
 
     def test_cleanup_after_bootstrap_failure_without_python(self):
         shutil.rmtree(self.agent_pm)

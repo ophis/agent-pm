@@ -2292,9 +2292,12 @@ main() {
   exec 3<>"$(terminal)"
   trap on_exit EXIT
   [ -d "$HOME/.agent-pm" ] || ledger_add dir "$HOME/.agent-pm"
-  if ! recorded agent-tree "$HOME/.agent-pm" || [ ! -f "$state_dir/agent-tree.paths" ]; then
+  if ! recorded agent-tree "$HOME/.agent-pm" || [ ! -f "$state_dir/agent-tree.paths" ] \
+    || [ -f "$state_dir/agent-tree.cleaned" ] || [ -f "$state_dir/agent-tree.pending" ]; then
     ledger_add agent-tree "$HOME/.agent-pm"
+    : >"$state_dir/agent-tree.pending"
     agent_tree_snapshot
+    rm -f "$state_dir/agent-tree.pending" "$state_dir/agent-tree.cleaned"
   fi
   # Record tool state before Homebrew, logins or launcher installation can create it.
   record_dir "$HOME/.homebrew"

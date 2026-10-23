@@ -785,6 +785,7 @@ main() {
     exit 0
   fi
   validate
+  [ ! -f "$state_dir/agent-tree.pending" ] || die "path inventory is incomplete; rerun install.sh before cleanup; nothing removed"
   protected_dirs
   show
   if [ -z "$yes" ] && ! ask_yn "Remove all of this?"; then die "nothing removed"; fi
@@ -819,6 +820,7 @@ main() {
           rm -rf -- "$path"
         done
       )
+      : >"$state_dir/agent-tree.cleaned"
       say "    kept preexisting files; path inventory and directory record retained"
     elif [ -n "$keep_root" ] || [ -e "$HOME/.agent-pm/board" ] || [ -L "$HOME/.agent-pm/board" ]; then
       rm -rf "$state_dir"
