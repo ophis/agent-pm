@@ -241,6 +241,13 @@ Then `agent-pm-crew worker NAME --client claude` starts NAME in its own containe
 the Viewer, `--display none`, `[session.viewer]` and `ls --descendants` work as on tmux. Every docker call goes to
 `unix://<account home>/.docker/run/docker.sock`, whatever `DOCKER_HOST`, `DOCKER_CONTEXT` or `DOCKER_CONFIG` say.
 
+In a Docker worker pane, scroll up with the mouse wheel or trackpad, both in iTerm's tmux integration
+and in a regular terminal. New workers enable the container tmux's `mouse` option and keep 50,000
+history lines, matching `ctmux`. Clients that capture the mouse (Claude Code, for example) keep their
+own scrolling; otherwise tmux enters copy mode to show pane history. Scroll back to the bottom to
+resume input, or press `q` to leave tmux copy mode. The history is inside the container; the host pane's
+scrollbar alone cannot show it. Restart an existing worker to apply these settings; no image rebuild is needed.
+
 Text a client copies in a container's pane (Claude Code's mouse selection, for one) reaches your clipboard by OSC 52:
 the container's tmux sets `set-clipboard on` and `allow-passthrough on`. Your terminal must support OSC 52 (Ghostty
 does), and a host tmux showing the pane needs `set -g set-clipboard on` in `~/.tmux.conf`.

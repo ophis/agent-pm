@@ -522,7 +522,8 @@ class Container:
             return self.python(argv, input or "")
         if self.new is not None:
             return done(argv, *self.new)
-        pane = argv[argv.index("--") + 1 : argv.index(";")]
+        command = argv.index("--") + 1
+        pane = argv[command : argv.index(";", command)]
         self.staged_mode = stat.S_IMODE(os.stat(pane[-1]).st_mode)
         res = self.python(pane, "")
         if res.returncode:
@@ -575,7 +576,7 @@ class LaunchTest(Case):
         )
 
     def new_session(self, runner):
-        (call,) = [argv for argv in runner.calls if argv[:2] == ["tmux", "new-session"]]
+        (call,) = [argv for argv in runner.calls if argv[0] == "tmux" and "new-session" in argv]
         return call
 
     def exec_d(self, runner, argv):
@@ -598,6 +599,10 @@ class LaunchTest(Case):
             new,
             [
                 "tmux",
+                "start-server",
+                *(";", "set-option", "-g", "history-limit", "50000"),
+                *(";", "set-option", "-g", "mouse", "on"),
+                ";",
                 "new-session",
                 "-d",
                 *NEW,
