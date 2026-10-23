@@ -13,3 +13,6 @@ NO_COVER_ALLOWED = {
         "ProcessControl.serve",
     ): "The detached runner's control socket server: binds a Unix socket and launches the group.",
 }
+
+
+EMBEDDED_PROGRAMS_ALLOWED = {}

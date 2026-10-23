@@ -64,7 +64,10 @@ func platformFixture(t *testing.T, goos, cpu, triple string, alias bool) (Runtim
 	r.owned = func(os.FileInfo) bool { return true }
 	r.execute = func(_ context.Context, _ command) ([]byte, error) { return []byte("codex-cli 0.163.0\n"), nil }
 	main := archive(t, &tar.Header{Name: "package/package.json", Typeflag: tar.TypeReg, Mode: 0644, Size: 1})
-	native := archive(t, &tar.Header{Name: "package/vendor/" + triple + "/bin/codex", Typeflag: tar.TypeReg, Mode: 0755, Size: 6})
+	native := archive(t,
+		&tar.Header{Name: "package/vendor/" + triple + "/bin/codex", Typeflag: tar.TypeReg, Mode: 0755, Size: 6},
+		&tar.Header{Name: "package/vendor/" + triple + "/bin/codex-code-mode-host", Typeflag: tar.TypeReg, Mode: 0755, Size: 4},
+		&tar.Header{Name: "package/vendor/" + triple + "/lib/support", Typeflag: tar.TypeReg, Mode: 0644, Size: 3})
 	data := map[string][]byte{"https://registry.npmjs.org/main.tgz": main, "https://registry.npmjs.org/native.tgz": native}
 	metadata := func(name, version, tarball string, body []byte, extra map[string]any) []byte {
 		sum := sha512.Sum512(body)

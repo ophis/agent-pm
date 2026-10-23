@@ -80,3 +80,39 @@ PYTHON_CODE_ALLOWED = {
         "844f553ea872f665a624970b7315cc589051acd75796dd8f2a437a0c47327385",
     ): "Foreground owner process needs the scripted process-free HarnessSession (delegate.tests), injectable only as a session_cls class object.",
 }
+
+
+EMBEDDED_PROGRAMS_ALLOWED = {
+    (
+        "delegate/tests/fakes/callback_recorder.py",
+        "9eab95e939ba98ce47fe6013b159a0526b7a4d2e044077d2b53755ba304ec33f",
+    ): "Existing callback recorder fixture delays a child to observe callback ordering.",
+    (
+        "delegate/tests/integration/bin_integration_test.py",
+        "c710e2832b40273e5a68ddb9026256785f0d2f47e44d3f285c6132d45114a427",
+    ): "Existing executable-selection fixture checks the system interpreter meets Python 3.11.",
+    (
+        "delegate/tests/integration/child_env_integration_test.py",
+        "51acfc7eaec58d79c12d5100cbe097b9584e30bba475b21e0033d969dd628df4",
+    ): "Existing environment fixture captures client launch environments from a separate caller process.",
+    (
+        "delegate/tests/integration/harness_contract_integration_test.py",
+        "f0d067b985e08af56357fe84b0b297618beeb741597f4c616f6a7ad9dc194b1a",
+    ): "Existing process fixture checks class methods answer for its roles and refuse an unknown one.",
+    (
+        "delegate/tests/integration/harness_integration_test.py",
+        "96dc3a20fb0bec1d0b6dc040878360d93011b9ca57335bef35fb982a55505cc1",
+    ): "Existing process fixture checks role client usage preserves sentinel identity and none without starting.",
+    (
+        "delegate/tests/integration/harness_integration_test.py",
+        "83e2486cff9dd4dc40383f5fddf383521e8e35a63679cb503ad28a49a8947aed",
+    ): "Existing process fixture checks two processes launch one harness.",
+    (
+        "delegate/tests/integration/harness_integration_test.py",
+        "ed0a2204e27345a82a6f28a5294fbf74196698727334665adb62ce7952e11a2c",
+    ): "Existing process fixture checks two processes resume once and return the same record.",
+    (
+        "delegate/tests/integration/harness_owner_integration_test.py",
+        "844f553ea872f665a624970b7315cc589051acd75796dd8f2a437a0c47327385",
+    ): "Existing harness ownership fixture starts an independent owner process for recovery checks.",
+}

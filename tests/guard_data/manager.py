@@ -33,3 +33,35 @@ PYTHON_CODE_ALLOWED = {
         "3174f044aeaf1f1adb4902ac247410e01107e76cea410e5e3fd8cfcd572bf825",
     ): "Dies (os._exit) inside the rotation lock right after Events.rotate and a durable ledger save, so recovery must finish without rollback; Events (agent_pm.manager.engine.events) is not re-exported.",
 }
+
+
+EMBEDDED_PROGRAMS_ALLOWED = {
+    (
+        "manager/tests/live_crew.py",
+        "9daa6ab4c97cc1be973fdcc46409449cf75024a77d4633ac96c5fa5f35ef9279",
+    ): "Existing crash fixture marks child exit and holds the shell until the test releases its gate.",
+    (
+        "manager/tests/integration/crew_cli_integration_test.py",
+        "d15b1ac2a7a7eba11971da7b0a2ea0d5a9df3f35c995d067920091c6868b64e5",
+    ): "Existing crew CLI fixture races independent appenders against the shared locked log.",
+    (
+        "manager/tests/integration/holder_integration_test.py",
+        "e20fe2f1e5d9adb32aa144fb0c2ddfc8ee7479809a740dda76d372631160e54d",
+    ): "Existing process fixture checks child environment replaces inherited identity and preserves exit code.",
+    (
+        "manager/tests/integration/holder_integration_test.py",
+        "b1ee562c7ce5b505e3c9868c3e68a6372c4ee8caadc2efc709af38bf831c15b7",
+    ): "Existing holder fixture observes whether inherited terminal stop signals remain blocked.",
+    (
+        "manager/tests/integration/receipt_integration_test.py",
+        "329edc866f0b4ea0add6fb69c156a272da4eeb5b5cd36aaa98656464f4d1a8dc",
+    ): "Existing process fixture checks child stdout and alias survive crew death before commit.",
+    (
+        "manager/tests/integration/receipt_integration_test.py",
+        "612cefd7b9f6f081700e83b2ff2769dff7d72c83dff3c3414cf02c1323bb4a0a",
+    ): "Existing process fixture checks child stdout and alias survive crew death before commit.",
+    (
+        "manager/tests/integration/roster_integration_test.py",
+        "2f1a3057fb0da566cc2695eee33e45ed83fe778bd4e4406e1a8459e02ea1d06a",
+    ): "Existing process fixture checks concurrent distinct process writes preserve both entries.",
+}

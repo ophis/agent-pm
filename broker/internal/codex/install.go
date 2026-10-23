@@ -83,6 +83,14 @@ func (r Runtime) metadata(ctx context.Context, name, version string) (packageMet
 }
 
 func (r Runtime) packageEntry(ctx context.Context, m packageMetadata, entry string) ([]byte, error) {
+	b, err := r.packageArchive(ctx, m)
+	if err != nil {
+		return nil, err
+	}
+	return readEntryBounded(b, entry, maxExpanded)
+}
+
+func (r Runtime) packageArchive(ctx context.Context, m packageMetadata) ([]byte, error) {
 	if !strings.HasPrefix(m.Dist.Integrity, "sha512-") {
 		return nil, errors.New("Codex package requires SHA-512 integrity")
 	}
@@ -98,10 +106,18 @@ func (r Runtime) packageEntry(ctx context.Context, m packageMetadata, entry stri
 	if !bytes.Equal(got[:], want) {
 		return nil, errors.New("Codex package integrity mismatch")
 	}
-	return readEntryBounded(b, entry, maxExpanded)
+	return b, nil
 }
 
 func (r Runtime) platformEntry(ctx context.Context, version, goos, cpu, triple string) ([]byte, error) {
+	b, err := r.platformArchive(ctx, version, goos, cpu)
+	if err != nil {
+		return nil, err
+	}
+	return readEntryBounded(b, "package/vendor/"+triple+"/bin/codex", maxExpanded)
+}
+
+func (r Runtime) platformArchive(ctx context.Context, version, goos, cpu string) ([]byte, error) {
 	main, err := r.metadata(ctx, "@openai/codex", version)
 	if err != nil {
 		return nil, err
@@ -129,7 +145,7 @@ func (r Runtime) platformEntry(ctx context.Context, version, goos, cpu, triple s
 	if len(platform.OS) != 1 || platform.OS[0] != goos || len(platform.CPU) != 1 || platform.CPU[0] != cpu {
 		return nil, errors.New("Codex platform package target rejected")
 	}
-	return r.packageEntry(ctx, platform, "package/vendor/"+triple+"/bin/codex")
+	return r.packageArchive(ctx, platform)
 }
 
 func (r Runtime) Install(ctx context.Context, version string, update bool) (Installation, error) {

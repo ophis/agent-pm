@@ -168,3 +168,50 @@ PYTHON_CODE_ALLOWED = {
         "57fc6aac3dc49a226570cf6f0855e21aea62e766ca50d9db62743186f3e0e6f6",
     ): "Runs the standalone account probe file by path under -I and audits that it imports only the standard library; run_path of that file is the subject.",
 }
+
+
+EMBEDDED_PROGRAMS_ALLOWED = {
+    (
+        "session/src/agent_pm/session/hosts/docker/host.py",
+        "ee61a1ec24e436f6fef0bc86511b4bfbfa91036687b7b6668107fcfbfc1bb84e",
+    ): "Existing private prompt writer runs as the container agent; freeze its current program body.",
+    (
+        "session/tests/integration/installed_integration_test.py",
+        "353dd97a00934849a329050c79575964e96388802b6a50b9fa31787a61218a1e",
+    ): "Existing process fixture checks the copy reads its packaged config and runs a headless session.",
+    (
+        "session/tests/integration/clients/codex/tui/start_integration_test.py",
+        "12c484c0edb7f7ebf292aa261aeca1fe260c4c668b2f4cb17d779403ad752df8",
+    ): "Existing process fixture checks package imports keep sys path and share canonical modules.",
+    (
+        "session/tests/integration/clients/codex/tui/start_integration_test.py",
+        "a54540807f5981fab22a3c225f83241ed92520cc5a1ea92493cd6e779e2e431f",
+    ): "Existing process fixture checks shared schema preserves hooks in isolated scripts and client.",
+    (
+        "session/tests/integration/clients/codex/tui/start_integration_test.py",
+        "57fc6aac3dc49a226570cf6f0855e21aea62e766ca50d9db62743186f3e0e6f6",
+    ): "Existing process fixture checks standalone account probe uses stdlib.",
+    (
+        "session/tests/integration/modes/tui_hook_integration_test.py",
+        "0953936b96e2cfe4945087733719e3863df5dfd56926aa5fc129ccbb02bbb5e2",
+    ): "Existing hook subprocess fixture drives journal replay, completion or configuration through the hook CLI.",
+    (
+        "session/tests/integration/modes/tui_hook_integration_test.py",
+        "bfe2fc0d72a89b07a9c295330864e6ddce5687bfa319892fbcdd07ae68f09340",
+    ): "Existing hook subprocess fixture drives journal replay, completion or configuration through the hook CLI.",
+    (
+        "session/tests/integration/modes/tui_hook_integration_test.py",
+        "4523f715e13ec23a8906c522451af1d7f18e915bebfa8750f3f6b59314952703",
+    ): "Existing hook subprocess fixture drives journal replay, completion or configuration through the hook CLI.",
+    (
+        "session/tests/integration/modes/tui_hook_integration_test.py",
+        "4338989ac7ba3b2e1bd23bf220291c4ffde5178caa41392ca098fd74ccb2731e",
+    ): "Existing hook subprocess fixture drives journal replay, completion or configuration through the hook CLI.",
+    (
+        "session/tests/integration/modes/tui_hook_integration_test.py",
+        "43ab38dddc34c8389bc6cef67a8fb21a6733611b59ff67ad97d822a774b9fd39",
+    ): "Existing process fixture checks two synchronized writers keep every complete journal record.",
+}
+
+
+EMBEDDED_PROGRAM_ARGV_RETURNS = {"agent_pm.session.hosts.docker.daemon.docker_call": 0}
