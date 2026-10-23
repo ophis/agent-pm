@@ -77,22 +77,28 @@ class ScrollbackTest(Case):
         result = self.outer.tmux("send-keys", "-t", "=view:", "-l", text)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def wheel(self, *, up: bool):
+        # SGR coordinates are 1-based; pane_top skips launch's top border.
+        x = int(self.value("pane_left")) + 1
+        y = int(self.value("pane_top")) + 1
+        self.send(f"\x1b[<{64 if up else 65};{x};{y}M")
+
     def read(self) -> bytes:
         return self.received.read_bytes() if self.received.exists() else b""
 
     def test_wheel_enters_history_and_returning_to_bottom_restores_input(self):
         self.launch(mouse=False)
-        self.send(WHEEL_UP)
+        self.wheel(up=True)
         live_tmux.wait(lambda: self.value("pane_in_mode") == "1", what="wheel entering copy mode")
-        self.send(WHEEL_DOWN)
+        self.wheel(up=False)
         live_tmux.wait(lambda: self.value("pane_in_mode") == "0", what="wheel leaving copy mode")
         self.send("ready")
         live_tmux.wait(lambda: b"ready" in self.read(), what="input reaching the application")
 
     def test_mouse_capturing_application_keeps_both_wheel_events(self):
         self.launch(mouse=True)
-        self.send(WHEEL_UP)
-        self.send(WHEEL_DOWN)
+        self.wheel(up=True)
+        self.wheel(up=False)
         live_tmux.wait(
             lambda: (WHEEL_UP + WHEEL_DOWN).encode() in self.read(),
             what="both wheel events reaching the application",

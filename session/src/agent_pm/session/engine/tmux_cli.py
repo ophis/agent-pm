@@ -735,8 +735,7 @@ class TmuxCli:
         """start's setup in one call, without events, pane-died `died`: the runner's `python` STAGEs
         argv and env (over the server's) in a 0600 file in its private `handover_dir` for RELAUNCH,
         keeping tmux's command line short; a failed launch deletes it. Returns process().
-        Enables mouse scrolling and 50,000 history lines before creating the pane; keeps default
-        mouse bindings so applications can handle their own scrolling. Forwards OSC 52 copies.
+        Keeps 50,000 history lines and default mouse bindings. Forwards OSC 52 copies.
         A `min_width` window is never narrower (_floor).
         """
         session_name(session)
