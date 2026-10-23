@@ -241,54 +241,45 @@ under_home() {
   return 0
 }
 
-# Shared with install-cleanup.sh; inventories paths only, without following directory symlinks.
-agent_tree_edit() {
+# Shared with install-cleanup.sh; prunes paths absent from the NUL-delimited baseline, without following symlinks.
+agent_tree_clean() {
   python3 -I -c '
-import json, os, shutil, sys
+import os, shutil, sys
 from pathlib import Path
 
-action, raw_root, raw_snapshot = sys.argv[1:]
+raw_root, raw_snapshot = sys.argv[1:]
 root, snapshot = Path(raw_root), Path(raw_snapshot)
 
 def children(directory):
     with os.scandir(directory) as stream:
         return sorted(stream, key=lambda item: item.name)
 
-def visit(directory, saved=None):
-    found = []
+def visit(directory, saved):
     for entry in children(directory):
         path = Path(entry.path)
         relative = str(path.relative_to(root))
         if directory == root and entry.name in ("install", "board"):
             continue
-        if saved is not None and relative not in saved:
+        if relative not in saved:
             if entry.is_dir(follow_symlinks=False):
                 shutil.rmtree(path)
             else:
                 path.unlink()
             continue
-        found.append(relative)
         if entry.is_dir(follow_symlinks=False):
-            found.extend(visit(path, saved))
-    return found
+            visit(path, saved)
 
 try:
-    if action == "snapshot":
-        saved = visit(root)
-        temporary = snapshot.with_suffix(".tmp")
-        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(saved, stream)
-        os.replace(temporary, snapshot)
-    elif action == "clean":
-        saved = json.loads(snapshot.read_text(encoding="utf-8"))
-        if not isinstance(saved, list) or not all(isinstance(item, str) for item in saved):
-            raise ValueError()
-        visit(root, set(saved))
-        if any(entry.name != "install" for entry in children(root)):
-            print("keep")
-    else:
+    raw = snapshot.read_bytes()
+    if not raw.endswith(b"\0"):
         raise ValueError()
+    paths = [Path(os.fsdecode(item)) for item in raw[:-1].split(b"\0")]
+    if root not in paths:
+        raise ValueError()
+    saved = {str(path.relative_to(root)) for path in paths}
+    visit(root, saved)
+    if any(entry.name != "install" for entry in children(root)):
+        print("keep")
 except (OSError, ValueError, TypeError, RecursionError):
     sys.exit("install: agent-pm path inventory failed; installer records retained for a rerun")
 ' "$@"
@@ -2332,7 +2323,11 @@ main() {
   [ -d "$HOME/.agent-pm" ] || ledger_add dir "$HOME/.agent-pm"
   if ! recorded agent-tree "$HOME/.agent-pm"; then
     mkdir -p "$state_dir"
-    agent_tree_edit snapshot "$HOME/.agent-pm" "$state_dir/agent-tree.json"
+    (
+      umask 077
+      find -H "$HOME/.agent-pm" \( -path "$state_dir" -o -path "$HOME/.agent-pm/board" \) -prune -o -print0 >"$state_dir/agent-tree.paths.tmp"
+    )
+    mv "$state_dir/agent-tree.paths.tmp" "$state_dir/agent-tree.paths"
     ledger_add agent-tree "$HOME/.agent-pm"
   fi
   # Record tool state before Homebrew, logins or launcher installation can create it.

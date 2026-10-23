@@ -1822,6 +1822,17 @@ exec /bin/rm "$@"
         self.assert_ok(self.cleanup("--yes"))
         self.assertFalse(Path(self.agent_pm).exists())
 
+    def test_cleanup_runtime_data_with_installer_owned_python(self):
+        shutil.rmtree(self.agent_pm)
+        (self.bin / "python3").unlink()
+        executable(self.fakes / "apps/python3", f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        self.assert_ok(self.opencode_only())
+        self.assertIn("formula\tpython", self.ledger())
+        self.runtime_files()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+        self.assertFalse((self.root / "opt/homebrew/bin/python3").exists())
+
     def tool_artifacts(self):
         return [
             Path(self.env.get("XDG_DATA_HOME", Path(self.home, ".local/share")), "opentui"),
