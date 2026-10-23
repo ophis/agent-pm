@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from dataclasses import replace
 from types import SimpleNamespace
 
 from agent_pm import delegate
@@ -131,6 +132,27 @@ class Gh:
 
 
 class BuildInputs(Case):
+    def test_enterprise_document_reads_and_repo_input(self):
+        docs = replace(DOCS, host="ghe.example.com")
+        url = "https://ghe.example.com/ophis/private_docs/blob/main/Product%20Design/prd.md"
+        run = Gh({endpoint("Product%20Design/prd.md"): ok("# Enterprise PRD")})
+        src = inputs.gather(issue(links=(Link(url),)), "engineer", docs, run=run)
+        text = inputs.render(
+            issue(ident="ENG-7"),
+            "engineer",
+            src,
+            target=target.Target("acme", "app", host="ghe.example.com"),
+            docs=docs,
+        )
+        self.assertIn("Repo: ghe.example.com/acme/app", text)
+        self.assertIn("# Enterprise PRD", text)
+        self.assertIn("--hostname", run.calls[0][0])
+        self.assertEqual(
+            inputs.doc_url(docs, "Research/a b.md"),
+            "https://ghe.example.com/ophis/private_docs/blob/main/Research/a%20b.md",
+        )
+        self.assertIsNone(inputs.doc_path(BASE + "Research/a.md", docs))
+
     TARGET = target.Target("ophis", "agent-pm", "ENG-7-session-registry")
 
     PRD = inputs.Doc(

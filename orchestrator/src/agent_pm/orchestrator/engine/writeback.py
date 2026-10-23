@@ -71,6 +71,7 @@ class Context:
     # look each comment step up by its ref before posting it, as on resume: its event may
     # come again after the post landed and its ledger write was lost
     redelivered: bool = False
+    host: str = "github.com"
 
 
 LEDGER = "writeback.json"
@@ -110,6 +111,7 @@ def context(cfg, role, accounts: Accounts, *, ident, issue_id, sid, resume, proj
         repos=accounts.repos,
         target=target,
         harness=accounts.harness,
+        host=cfg.repo_host(role),
     )
 
 
@@ -316,7 +318,7 @@ def _url(ctx, url):
     if not url or TASKS[ctx.role].input != "build":
         return url
     if ctx.target and url.lower().startswith(
-        f"https://github.com/{ctx.target[0]}/{ctx.target[1]}/".lower()
+        f"https://{ctx.host}/{ctx.target[0]}/{ctx.target[1]}/".lower()
     ):
         return url
     log(

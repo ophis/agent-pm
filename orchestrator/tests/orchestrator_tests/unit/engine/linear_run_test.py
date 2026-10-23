@@ -49,6 +49,30 @@ class CheckedDelegate(FakeDelegate):
 
 
 class Runs(RunCase):
+    def test_enterprise_build_host_fallback_reaches_delegate_overlay(self):
+        cfg = replace(self.cfg, docs=replace(self.cfg.docs, host="ghe.example.com"))
+        owner = LinearRun(
+            "TASK-1",
+            "Build",
+            cfg.issue_workdir("TASK-1"),
+            cfg=cfg,
+            role="engineer",
+            sid=SID,
+            client="fake",
+            delegate_cls=CapturedDelegate,
+        )
+        self.assertEqual(
+            owner.delegate.accepted[2]["overlays"][-1],
+            {
+                "roles": {
+                    "engineer": {
+                        "output": dict(cfg.roles["engineer"].run.output)
+                        | {"host": "ghe.example.com"}
+                    }
+                }
+            },
+        )
+
     def test_detach_sets_outer_once_and_preserves_the_provider_receipt(self):
         owner, record = self.start()
         with mock.patch.object(owner.delegate, "detach", return_value=record) as detach:

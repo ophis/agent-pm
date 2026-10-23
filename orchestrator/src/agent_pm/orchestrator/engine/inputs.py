@@ -61,7 +61,7 @@ PRECEDENCE = {
 def _link_re(docs):
     # the path ends at the first raw `#` or `?` (GitHub percent-encodes real ones)
     return re.compile(
-        rf"https://github\.com/{re.escape(docs.repo)}/blob/{re.escape(docs.branch)}/([^\s)>\]`#?]*)"
+        rf"https://{re.escape(docs.host)}/{re.escape(docs.repo)}/blob/{re.escape(docs.branch)}/([^\s)>\]`#?]*)"
         r"(?:[#?][^\s)>\]`]*)?"
     )
 
@@ -90,7 +90,7 @@ def _links(issue, docs):
 
 
 def doc_url(docs, path):
-    return f"https://github.com/{docs.repo}/blob/{docs.branch}/{quote(path)}"
+    return f"https://{docs.host}/{docs.repo}/blob/{docs.branch}/{quote(path)}"
 
 
 def _contents(docs, path):
@@ -98,7 +98,17 @@ def _contents(docs, path):
 
 
 def _read(run, docs, path):
-    res = run(["gh", "api", "-H", RAW, _contents(docs, path)], SHORT)
+    res = run(
+        [
+            "gh",
+            "api",
+            *(["--hostname", docs.host] if docs.host != "github.com" else []),
+            "-H",
+            RAW,
+            _contents(docs, path),
+        ],
+        SHORT,
+    )
     if res.returncode == 0:
         return res.stdout
     if re.search(r"HTTP 404\b", res.stderr or ""):
@@ -116,7 +126,15 @@ def _names(text):
 
 def listing(run, docs, dir_) -> list[str] | None:
     d = dir_.rstrip("/")
-    res = run(["gh", "api", _contents(docs, d)], SHORT)
+    res = run(
+        [
+            "gh",
+            "api",
+            *(["--hostname", docs.host] if docs.host != "github.com" else []),
+            _contents(docs, d),
+        ],
+        SHORT,
+    )
     if res.returncode != 0:
         if re.search(r"HTTP 404\b", res.stderr or ""):
             return None
@@ -206,7 +224,8 @@ def _split(issue):
 
 
 def _repo(target):
-    return "Repo: " + (target.clone or f"{target.owner}/{target.name}")
+    prefix = f"{target.host}/" if target.host != "github.com" else ""
+    return "Repo: " + (target.clone or f"{prefix}{target.owner}/{target.name}")
 
 
 def _checkout(issue):

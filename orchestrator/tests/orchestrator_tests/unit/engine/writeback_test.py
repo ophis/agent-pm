@@ -952,6 +952,15 @@ class OutcomeFiles(Base):
 
 
 class EngineeringUrls(Base):
+    def test_enterprise_completion_accepts_only_target_host(self):
+        ctx = replace(self.ctx(), host="ghe.example.com")
+        url = PR.replace("github.com", "ghe.example.com")
+        self.assertEqual(writeback._url(ctx, url), url)
+        self.assertEqual(writeback._url(ctx, PR), "")
+        self.assertEqual(
+            writeback._url(ctx, url.replace("ghe.example.com/", "ghe.example.com.evil/")), ""
+        )
+
     def test_an_engineering_url_must_be_on_the_target(self):
         evil = "https://github.com/ophis/agent-pm-evil/pull/1"
         for name, target, o, calls, skip in (

@@ -128,6 +128,16 @@ class Keywords(Case):
 
 
 class Search(Case):
+    def test_enterprise_pr_search_selects_host(self):
+        runner = FakeRun([(("env", "GH_HOST=ghe.example.com", "gh", "search", "prs"), ok("[]"))])
+        self.assertEqual(
+            related._pr_refs(
+                runner, Target("acme", "app", host="ghe.example.com"), ["queue"], {}, set()
+            ),
+            [],
+        )
+        self.assertIn("acme/app", runner.calls[0][0])
+
     def test_one_request_with_mentioned_ids(self):
         gql = Gql(found=[node("TASK-3")], named=[node("TASK-30"), node("TASK-3")])
         got = search(

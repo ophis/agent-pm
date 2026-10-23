@@ -1788,7 +1788,7 @@ class ConfigurationRoot(ConfigFile, Case):
 
     def test_docs_mismatch(self):
         message = (
-            "core: document roles must publish to one github.com repo and branch (their [output] in "
+            "core: GitHub document roles must publish to one host, repo and branch (their [output] in "
             "~/.agent-pm/config.local.toml)"
         )
         for design in (
@@ -1801,6 +1801,29 @@ class ConfigurationRoot(ConfigFile, Case):
                 self.fails(message, PIPELINE)
         self.core(CORE_TOML)
         self.fails(message, HEADER + ENGINEER_ONLY + role("engineer"))
+
+    def test_enterprise_document_and_build_hosts(self):
+        self.core(
+            CORE_TOML.replace('type = "github",', 'type = "github", host = "ghe.example.com",')
+        )
+        cfg = self.load(PIPELINE)
+        self.assertEqual(cfg.docs.host, "ghe.example.com")
+        self.assertEqual(cfg.repo_host("engineer"), "ghe.example.com")
+        cfg = self.load(
+            PIPELINE
+            + '[core.roles.engineer.output]\ntype = "pull-request"\nhost = "build.example.com"\n'
+        )
+        self.assertEqual(cfg.repo_host("engineer"), "build.example.com")
+
+    def test_enterprise_clone_keys_are_host_specific(self):
+        clone = os.path.join(self.home, "enterprise-clone")
+        os.makedirs(os.path.join(clone, ".git"))
+        remote = CompletedProcess([], 0, "git@ghe.example.com:acme/app.git\n", "")
+        with mock.patch("subprocess.run", return_value=remote):
+            cfg = self.load(PIPELINE + f'[local_clones]\n"ghe.example.com/acme/app" = "{clone}"\n')
+            self.assertEqual(cfg.local_clones["ghe.example.com/acme/app"], clone)
+            self.assertIsNone(config.clone_error(clone, "acme/app", host="ghe.example.com"))
+            self.assertIn("not github.com/acme/app", config.clone_error(clone, "acme/app"))
 
 
 # A local table that stays empty is dropped (utils/src/agent_pm/utils/config_file.py), so a role

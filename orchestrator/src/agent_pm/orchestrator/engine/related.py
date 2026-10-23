@@ -127,6 +127,7 @@ def _doc_refs(run, docs, words, names, excluded):
 def _pr_refs(run, target, words, names, excluded):
     res = run(
         [
+            *(["env", f"GH_HOST={target.host}"] if target.host != "github.com" else []),
             *("gh", "search", "prs", "--merged", "--repo", f"{target.owner}/{target.name}"),
             *("--limit", "5", "--json", "number,title,url", "--"),
             *[t for w in words for t in ("OR", w)][1:],

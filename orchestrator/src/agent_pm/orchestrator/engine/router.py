@@ -749,6 +749,7 @@ def _outer(a, cfg, *, gql, run, keychain, wiring, now, attended):
                 delegate=delegate_cls,
                 workdir=workdir,
                 roles=cfg.roles,
+                host=cfg.repo_host(role),
             )
         except (OSError, subprocess.TimeoutExpired) as e:
             return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
@@ -762,7 +763,7 @@ def _outer(a, cfg, *, gql, run, keychain, wiring, now, attended):
             log("router", "bounce", a.issue, reason=repo.reason)
             return 0
     else:
-        repo = target.research_repo(issue, accounts.repos)
+        repo = target.research_repo(issue, accounts.repos, host=cfg.docs.host)
     slug = f"{repo.owner}/{repo.name}" if build and repo else None
     if repo is not None:
         repo = target.with_clone(
