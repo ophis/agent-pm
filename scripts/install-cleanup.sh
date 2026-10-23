@@ -77,6 +77,59 @@ under_home() {
   return 0
 }
 
+# Shared with install-cleanup.sh; inventories paths only, without following directory symlinks.
+agent_tree_edit() {
+  python3 -I -c '
+import json, os, shutil, sys
+from pathlib import Path
+
+action, raw_root, raw_snapshot = sys.argv[1:]
+root, snapshot = Path(raw_root), Path(raw_snapshot)
+
+def children(directory):
+    with os.scandir(directory) as stream:
+        return sorted(stream, key=lambda item: item.name)
+
+def visit(directory, saved=None):
+    found = []
+    for entry in children(directory):
+        path = Path(entry.path)
+        relative = str(path.relative_to(root))
+        if directory == root and entry.name in ("install", "board"):
+            continue
+        if saved is not None and relative not in saved:
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            continue
+        found.append(relative)
+        if entry.is_dir(follow_symlinks=False):
+            found.extend(visit(path, saved))
+    return found
+
+try:
+    if action == "snapshot":
+        saved = visit(root)
+        temporary = snapshot.with_suffix(".tmp")
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(saved, stream)
+        os.replace(temporary, snapshot)
+    elif action == "clean":
+        saved = json.loads(snapshot.read_text(encoding="utf-8"))
+        if not isinstance(saved, list) or not all(isinstance(item, str) for item in saved):
+            raise ValueError()
+        visit(root, set(saved))
+        if any(entry.name != "install" for entry in children(root)):
+            print("keep")
+    else:
+        raise ValueError()
+except (OSError, ValueError, TypeError, RecursionError):
+    sys.exit("install: agent-pm path inventory failed; installer records retained for a rerun")
+' "$@"
+}
+
 # Exit 0 when the fields are a Ledger record the cleanup can act on.
 ledger_valid() {
   local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
@@ -86,6 +139,7 @@ ledger_valid() {
     docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
     clt:1 | broker:1) true ;;
+    agent-tree:2) [ "$2" = "$HOME/.agent-pm" ] ;;
     config:2) case $2 in created | backup) true ;; *) false ;; esac ;;
     formula:2) case $2 in gh | tmux | git | python | go | node) true ;; *) false ;; esac ;;
     cask:2) case $2 in iterm2 | claude-code | codex | docker-desktop) true ;; *) false ;; esac ;;
@@ -247,7 +301,7 @@ show() {
   local kind
   printf 'install-cleanup.sh will remove what install.sh added:\n' >&3
   for kind in launchd keychain broker codex-plugin codex-marketplace claude-plugin claude-marketplace \
-    login opencode-auth opencode-provider opencode-config docker-block profile profile-file config cask formula homebrew clt file board-dir dir; do
+    login opencode-auth opencode-provider opencode-config agent-tree docker-block profile profile-file config cask formula homebrew clt file board-dir dir; do
     of_kind "$kind" | tr '\t' ' ' | sed 's/^/  /' >&3
   done
 }
@@ -733,8 +787,17 @@ files_and_dirs() {
   done <<<"$(of_kind dir | cut -f2 | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-)"
 }
 
+agent_tree() {
+  local keep
+  step "agent-pm runtime data"
+  if ! grep -qxF "agent-tree"$'\t'"$HOME/.agent-pm" "$ledger"; then return; fi
+  keep=$(agent_tree_edit clean "$HOME/.agent-pm" "$state_dir/agent-tree.json") || die "cannot remove runtime data; its records stay for a rerun"
+  drop "agent-tree"$'\t'"$HOME/.agent-pm" || die "cannot update $ledger"
+  printf '%s' "$keep"
+}
+
 main() {
-  local platform agent_root= path
+  local platform agent_root= keep_root=
   set +x
   parse_args "$@"
   platform=$(uname -sm)
@@ -766,29 +829,24 @@ main() {
   brew_packages
   homebrew_and_clt
   files_and_dirs
+  keep_root=$(agent_tree)
   step "~/.agent-pm"
   if grep -vx "dir"$'\t'"$HOME/.agent-pm" "$ledger" | grep -q .; then
     die "records no step removed are left in $ledger"
   fi
-  if [ -n "$agent_root" ] && { [ -e "$HOME/.agent-pm/board" ] || [ -L "$HOME/.agent-pm/board" ]; }; then
-    # The root did not exist before install; only the kept board and cleanup record survive.
-    (
-      shopt -s dotglob nullglob
-      for path in "$HOME/.agent-pm/"*; do
-        case $path in "$HOME/.agent-pm/board" | "$state_dir") continue ;; esac
-        rm -rf -- "$path"
-      done
-    )
-  fi
-  rm -rf "$state_dir"
   if [ -n "$agent_root" ]; then
-    if [ -e "$HOME/.agent-pm/board" ] || [ -L "$HOME/.agent-pm/board" ]; then
+    if [ -n "$keep_root" ] || [ -e "$HOME/.agent-pm/board" ] || [ -L "$HOME/.agent-pm/board" ]; then
+      rm -rf "$state_dir"
       mkdir -p "$state_dir"
       printf 'dir\t%s\n' "$HOME/.agent-pm" >"$ledger"
-      say "    kept $HOME/.agent-pm/board; directory record retained"
-    else
-      rm -rf "$HOME/.agent-pm"
+      say "    kept preexisting files or board; directory record retained"
+    elif ! rm -rf "$HOME/.agent-pm"; then
+      mkdir -p "$state_dir"
+      printf 'dir\t%s\n' "$HOME/.agent-pm" >"$ledger"
+      die "cannot remove $HOME/.agent-pm; its record stays for a rerun"
     fi
+  else
+    rm -rf "$state_dir"
   fi
   current=
   say "Removed what install.sh added."

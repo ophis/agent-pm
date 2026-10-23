@@ -1756,6 +1756,11 @@ class InstallTest(Case):
         original.parent.mkdir(parents=True)
         original.write_text("user work")
         self.assert_ok(self.opencode_only())
+        new = original.parent / "runtime-result.txt"
+        new.write_text("runtime data")
+        other = Path(self.agent_pm, "work/X/result.txt")
+        other.parent.mkdir()
+        other.write_text("runtime data")
         for name in ("logs", "adhoc", "managers", "docker-state", "workers", "tmp"):
             path = Path(self.agent_pm, name, "runtime-data")
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -1763,9 +1768,59 @@ class InstallTest(Case):
         self.assert_ok(self.cleanup("--yes"))
         self.assertEqual(user.read_text(), "keep")
         self.assertEqual(original.read_text(), "user work")
+        self.assertFalse(new.exists())
+        self.assertFalse(other.parent.exists())
         self.assertFalse(self.ledger())
         for name in ("logs", "adhoc", "managers", "docker-state", "workers", "tmp"):
             self.assertFalse(Path(self.agent_pm, name).exists(), name)
+
+    def test_cleanup_preserves_preexisting_dangling_runtime_link(self):
+        link = Path(self.agent_pm, "work")
+        target = Path(self.home, "unmounted-user-work")
+        link.symlink_to(target)
+        self.assert_ok(self.opencode_only())
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.readlink(), target)
+
+    def test_cleanup_runtime_removal_failure_keeps_records_for_retry(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(self.opencode_only())
+        locked = Path(self.agent_pm, "unrecorded/locked")
+        locked.mkdir(parents=True)
+        (locked / "runtime.txt").write_text("runtime data")
+        locked.chmod(0o500)
+        self.addCleanup(lambda: locked.exists() and locked.chmod(0o700))
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn(f"dir\t{self.agent_pm}", self.ledger())
+        self.assertIn(f"agent-tree\t{self.agent_pm}", self.ledger())
+        locked.chmod(0o700)
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_cleanup_final_root_removal_failure_restores_ownership_record(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(self.opencode_only())
+        (self.fakes / "fail-root-remove").touch()
+        rm = self.bin / "rm"
+        rm.unlink()
+        executable(
+            rm,
+            """#!/bin/sh
+if [ "$#" = 2 ] && [ "$1" = -rf ] && [ "$2" = "$HOME/.agent-pm" ] && [ -f "$FAKES/fail-root-remove" ]; then
+  /bin/rm -f "$FAKES/fail-root-remove" "$HOME/.agent-pm/install/added"
+  exit 1
+fi
+exec /bin/rm "$@"
+""",
+        )
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn("its record stays for a rerun", result.stderr)
+        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
 
     def tool_artifacts(self):
         return [
@@ -3145,18 +3200,7 @@ class InstallTest(Case):
             self.ledger(),
             [
                 f"dir\t{h}/.agent-pm",
-                *(
-                    f"dir\t{h}/.agent-pm/{name}"
-                    for name in (
-                        "logs",
-                        "work",
-                        "adhoc",
-                        "managers",
-                        "docker-state",
-                        "workers",
-                        "tmp",
-                    )
-                ),
+                f"agent-tree\t{h}/.agent-pm",
                 f"dir\t{h}/.homebrew",
                 f"file\t{h}/.homebrew/trust.json",
                 f"dir\t{h}/.cache/gh",

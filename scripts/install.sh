@@ -241,6 +241,59 @@ under_home() {
   return 0
 }
 
+# Shared with install-cleanup.sh; inventories paths only, without following directory symlinks.
+agent_tree_edit() {
+  python3 -I -c '
+import json, os, shutil, sys
+from pathlib import Path
+
+action, raw_root, raw_snapshot = sys.argv[1:]
+root, snapshot = Path(raw_root), Path(raw_snapshot)
+
+def children(directory):
+    with os.scandir(directory) as stream:
+        return sorted(stream, key=lambda item: item.name)
+
+def visit(directory, saved=None):
+    found = []
+    for entry in children(directory):
+        path = Path(entry.path)
+        relative = str(path.relative_to(root))
+        if directory == root and entry.name in ("install", "board"):
+            continue
+        if saved is not None and relative not in saved:
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            continue
+        found.append(relative)
+        if entry.is_dir(follow_symlinks=False):
+            found.extend(visit(path, saved))
+    return found
+
+try:
+    if action == "snapshot":
+        saved = visit(root)
+        temporary = snapshot.with_suffix(".tmp")
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(saved, stream)
+        os.replace(temporary, snapshot)
+    elif action == "clean":
+        saved = json.loads(snapshot.read_text(encoding="utf-8"))
+        if not isinstance(saved, list) or not all(isinstance(item, str) for item in saved):
+            raise ValueError()
+        visit(root, set(saved))
+        if any(entry.name != "install" for entry in children(root)):
+            print("keep")
+    else:
+        raise ValueError()
+except (OSError, ValueError, TypeError, RecursionError):
+    sys.exit("install: agent-pm path inventory failed; installer records retained for a rerun")
+' "$@"
+}
+
 # Exit 0 when the fields are a Ledger record the cleanup can act on.
 ledger_valid() {
   local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
@@ -250,6 +303,7 @@ ledger_valid() {
     docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
     clt:1 | broker:1) true ;;
+    agent-tree:2) [ "$2" = "$HOME/.agent-pm" ] ;;
     config:2) case $2 in created | backup) true ;; *) false ;; esac ;;
     formula:2) case $2 in gh | tmux | git | python | go | node) true ;; *) false ;; esac ;;
     cask:2) case $2 in iterm2 | claude-code | codex | docker-desktop) true ;; *) false ;; esac ;;
@@ -286,7 +340,7 @@ recorded() { [ -f "$ledger" ] && grep -qxF -- "$(
 )" "$ledger"; }
 
 # Records directory $1 when it does not exist yet.
-record_dir() { [ -e "$1" ] || ledger_add dir "$1"; }
+record_dir() { [ -e "$1" ] || [ -L "$1" ] || ledger_add dir "$1"; }
 
 # Records file $1 when it does not exist yet.
 record_file() { [ -e "$1" ] || ledger_add file "$1"; }
@@ -2266,7 +2320,7 @@ EOF
 }
 
 main() {
-  local platform answered= path
+  local platform answered=
   set +x
   parse_args "$@"
   early_checks
@@ -2276,9 +2330,11 @@ main() {
   exec 3<>"$(terminal)"
   trap on_exit EXIT
   [ -d "$HOME/.agent-pm" ] || ledger_add dir "$HOME/.agent-pm"
-  for path in logs work adhoc managers docker-state workers tmp; do
-    record_dir "$HOME/.agent-pm/$path"
-  done
+  if ! recorded agent-tree "$HOME/.agent-pm"; then
+    mkdir -p "$state_dir"
+    agent_tree_edit snapshot "$HOME/.agent-pm" "$state_dir/agent-tree.json"
+    ledger_add agent-tree "$HOME/.agent-pm"
+  fi
   # Record tool state before Homebrew, logins or launcher installation can create it.
   record_dir "$HOME/.homebrew"
   record_file "$HOME/.homebrew/trust.json"
