@@ -1,9 +1,14 @@
+import ast
 import hashlib
+from pathlib import Path
 
+from tests.case import REPO
 from tests.guard_checks.embedded_programs import embedded_programs
+from tests.guard_data.session import EMBEDDED_PROGRAMS_ALLOWED as SESSION_ALLOWED
 from tests.guard_samples import Sample
 
 PATH = "delegate/tests/example.py"
+HOST = "session/src/agent_pm/session/hosts/docker/host.py"
 
 
 class EmbeddedPrograms(Sample):
@@ -31,6 +36,49 @@ class EmbeddedPrograms(Sample):
             "docker('exec', name, PYTHON, '-I', '-c', TOOL_PROBE)\n"
         )
         self.assertTrue(self.checked(source))
+
+    def docker_program(self, program, *, execute=True):
+        source = (
+            "from agent_pm.session.hosts.docker.daemon import docker_call as build\n"
+            "IMAGE_PYTHON = '/opt/agent-pm/venv/bin/python'\n"
+            f"PROMPT_STAGE = {program!r}\n"
+            "class Worker:\n"
+            "    def stage(self):\n"
+            "        argv, env = build(self.docker,\n"
+            "            *('exec', '-i', '--user', 'agent', container),\n"
+            "            *(IMAGE_PYTHON, '-I', '-c', PROMPT_STAGE, path))\n"
+        )
+        return source + ("        self.run(argv, env)\n" if execute else "")
+
+    def test_docker_builder_tuple_result_reaches_self_run_but_inert_data_does_not(self):
+        source = self.docker_program("print('static fixture')")
+        (found,) = self.checked(source)
+        self.assertIn("interpreter -c", found)
+        self.assertEqual(
+            self.checked(self.docker_program("print('static fixture')", execute=False)), []
+        )
+
+    def test_real_prompt_stage_has_one_exact_exception_and_changed_body_is_rejected(self):
+        source = Path(REPO, HOST).read_text()
+        program = next(
+            ast.literal_eval(node.value)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "PROMPT_STAGE"
+                for target in node.targets
+            )
+        )
+        allowed = {key: reason for key, reason in SESSION_ALLOWED.items() if key[0] == HOST}
+        self.assertEqual(len(allowed), 1)
+        self.assertIn((HOST, hashlib.sha256(program.encode()).hexdigest()), allowed)
+        root = self.tree({HOST: source})
+        self.assertTrue(embedded_programs(root, allowed={}))
+        self.assertEqual(embedded_programs(root, allowed=allowed), [])
+        changed = self.tree({HOST: self.docker_program("print('unregistered static fixture')")})
+        found = embedded_programs(changed, allowed=allowed)
+        self.assertTrue(any("embedded program (interpreter -c)" in line for line in found), found)
+        self.assertTrue(any("stale embedded program exception" in line for line in found), found)
 
     def test_inert_command_lists_in_assertions_and_data_calls_are_allowed(self):
         for call in ("self.assertEqual(actual, ARGV)", "print(ARGV)", "record(ARGV)"):

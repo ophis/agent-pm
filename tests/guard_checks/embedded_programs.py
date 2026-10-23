@@ -7,7 +7,7 @@ import re
 import textwrap
 
 from tests.guard_checks.common import _tree_files
-from tests.guard_data import EMBEDDED_PROGRAMS_ALLOWED
+from tests.guard_data import EMBEDDED_PROGRAM_ARGV_RETURNS, EMBEDDED_PROGRAMS_ALLOWED
 
 SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 
@@ -179,8 +179,14 @@ class _Scan:
             if isinstance(node, ast.Assign | ast.AnnAssign | ast.NamedExpr):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for target in targets:
-                    if isinstance(target, ast.Name) and node.value is not None:
-                        env.setdefault(target.id, []).append((node.value, env))
+                    value = node.value
+                    if isinstance(target, ast.Tuple | ast.List) and isinstance(value, ast.Call):
+                        slot = EMBEDDED_PROGRAM_ARGV_RETURNS.get(_name(value.func, env))
+                        if slot is not None and slot < len(target.elts):
+                            target = target.elts[slot]
+                            value = ast.Tuple(elts=value.args)
+                    if isinstance(target, ast.Name) and value is not None:
+                        env.setdefault(target.id, []).append((value, env))
             elif isinstance(node, ast.Import | ast.ImportFrom):
                 for alias in node.names:
                     name = alias.asname or alias.name.split(".")[0]

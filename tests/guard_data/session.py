@@ -172,6 +172,10 @@ PYTHON_CODE_ALLOWED = {
 
 EMBEDDED_PROGRAMS_ALLOWED = {
     (
+        "session/src/agent_pm/session/hosts/docker/host.py",
+        "ee61a1ec24e436f6fef0bc86511b4bfbfa91036687b7b6668107fcfbfc1bb84e",
+    ): "Existing private prompt writer runs as the container agent; freeze its current program body.",
+    (
         "session/tests/integration/installed_integration_test.py",
         "353dd97a00934849a329050c79575964e96388802b6a50b9fa31787a61218a1e",
     ): "Existing process fixture checks the copy reads its packaged config and runs a headless session.",
@@ -208,3 +212,6 @@ EMBEDDED_PROGRAMS_ALLOWED = {
         "43ab38dddc34c8389bc6cef67a8fb21a6733611b59ff67ad97d822a774b9fd39",
     ): "Existing process fixture checks two synchronized writers keep every complete journal record.",
 }
+
+
+EMBEDDED_PROGRAM_ARGV_RETURNS = {"agent_pm.session.hosts.docker.daemon.docker_call": 0}
