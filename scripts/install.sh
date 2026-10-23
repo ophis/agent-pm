@@ -259,7 +259,7 @@ ledger_valid() {
     launchd:2) case $2 in router | promote) true ;; *) false ;; esac ;;
     keychain:3) [[ $2 =~ $plain ]] && [[ $3 =~ $plain ]] ;;
     opencode-auth:3 | opencode-provider:3) under_home "$2" && [[ $3 =~ $name_pattern ]] ;;
-    opencode-config:2) under_home "$2" && case ${2##*/} in opencode.json | opencode.jsonc) true ;; *) false ;; esac ;;
+    opencode-config:2) under_home "$2" && case ${2##*/} in opencode.json | opencode.jsonc | package.json | package-lock.json | .gitignore) true ;; *) false ;; esac ;;
     *) false ;;
   esac
 }
@@ -1190,7 +1190,7 @@ opencode_plugin() {
     [ -d "$dir" ] && [ -n "$had" ] || had=unknown
     say "    $spec: $ref is at ${commit:0:12}, OpenCode's copy at ${had:0:12}: downloading it again"
   fi
-  for file in "$conf/opencode.json" "$conf/opencode.jsonc"; do
+  for file in "$conf/opencode.json" "$conf/opencode.jsonc" "$conf/package.json" "$conf/package-lock.json" "$conf/.gitignore"; do
     if [ -f "$file" ] && ! recorded file "$file" && ! recorded opencode-config "$file"; then
       cp "$file" "$state_dir/${file##*/}.orig"
       ledger_add opencode-config "$file"

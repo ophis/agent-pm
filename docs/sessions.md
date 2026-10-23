@@ -104,7 +104,9 @@ the provider it added if its definition is unchanged. Plugin cleanup then restor
 backup from before the first plugin install, including the user's original providers and settings;
 edits made after that backup revert. A configuration created by this installation stays recorded as
 created across upgrades and is removed with the plugin's added files (`node_modules`, `package.json`,
-`package-lock.json`, `.gitignore`), including after repeated install/cleanup cycles. Preexisting files stay.
+`package-lock.json`, `.gitignore`), including after repeated install/cleanup cycles. Preexisting
+`package.json`, `package-lock.json` and `.gitignore` are also backed up before the first plugin install
+and restored by cleanup.
 The cleanup list also includes newly created OpenTUI data, gh cache/state, uv cache and
 `~/.homebrew/trust.json`; it respects `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and
 `UV_CACHE_DIR` for those tool directories. Existing tool directories and trust files are kept.

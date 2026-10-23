@@ -1663,6 +1663,13 @@ class InstallTest(Case):
         path.parent.mkdir(parents=True)
         original = b'{"theme": "mine", "plugin": ["user-plugin"]}\n  \n'
         path.write_bytes(original)
+        originals = {
+            "package.json": b'{"dependencies":{"user-plugin":"1.0.0"}}\n',
+            "package-lock.json": b'{"name":"user-lock","lockfileVersion":3}\n',
+            ".gitignore": b"# user ignores\nuser-cache/\n",
+        }
+        for name, contents in originals.items():
+            (path.parent / name).write_bytes(contents)
         for cycle in range(2):
             with self.subTest(cycle=cycle):
                 self.assert_ok(self.opencode_only())
@@ -1670,8 +1677,9 @@ class InstallTest(Case):
                 self.assert_ok(self.opencode_rerun())
                 self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
                 self.assertEqual(path.read_bytes(), original)
-                for name in ("node_modules", "package.json", "package-lock.json", ".gitignore"):
-                    self.assertFalse((path.parent / name).exists(), name)
+                self.assertFalse((path.parent / "node_modules").exists())
+                for name, contents in originals.items():
+                    self.assertEqual((path.parent / name).read_bytes(), contents, name)
 
     def test_cleanup_keeps_root_ownership_across_board_and_install_cycles(self):
         shutil.rmtree(self.agent_pm)

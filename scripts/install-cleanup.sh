@@ -95,7 +95,7 @@ ledger_valid() {
     launchd:2) case $2 in router | promote) true ;; *) false ;; esac ;;
     keychain:3) [[ $2 =~ $plain ]] && [[ $3 =~ $plain ]] ;;
     opencode-auth:3 | opencode-provider:3) under_home "$2" && [[ $3 =~ $name_pattern ]] ;;
-    opencode-config:2) under_home "$2" && case ${2##*/} in opencode.json | opencode.jsonc) true ;; *) false ;; esac ;;
+    opencode-config:2) under_home "$2" && case ${2##*/} in opencode.json | opencode.jsonc | package.json | package-lock.json | .gitignore) true ;; *) false ;; esac ;;
     *) false ;;
   esac
 }
