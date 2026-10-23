@@ -77,6 +77,15 @@ under_home() {
   return 0
 }
 
+# Shared with install-cleanup.sh; find -path consumes a pattern even when the shell argument is quoted.
+agent_tree_find() {
+  local pattern=$HOME/.agent-pm char
+  for char in '\' '*' '?' '[' ']'; do
+    pattern=${pattern//"$char"/\\$char}
+  done
+  find -H "$HOME/.agent-pm" \( -path "$pattern/install" -o -path "$pattern/board" \) -prune -o -print0
+}
+
 # Exit 0 when the fields are a Ledger record the cleanup can act on.
 ledger_valid() {
   local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
@@ -86,6 +95,7 @@ ledger_valid() {
     docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
     clt:1 | broker:1) true ;;
+    agent-tree:2) [ "$2" = "$HOME/.agent-pm" ] ;;
     config:2) case $2 in created | backup) true ;; *) false ;; esac ;;
     formula:2) case $2 in gh | tmux | git | python | go | node) true ;; *) false ;; esac ;;
     cask:2) case $2 in iterm2 | claude-code | codex | docker-desktop) true ;; *) false ;; esac ;;
@@ -95,7 +105,7 @@ ledger_valid() {
     launchd:2) case $2 in router | promote) true ;; *) false ;; esac ;;
     keychain:3) [[ $2 =~ $plain ]] && [[ $3 =~ $plain ]] ;;
     opencode-auth:3 | opencode-provider:3) under_home "$2" && [[ $3 =~ $name_pattern ]] ;;
-    opencode-config:2) under_home "$2" && case ${2##*/} in opencode.json | opencode.jsonc) true ;; *) false ;; esac ;;
+    opencode-config:2) under_home "$2" && case ${2##*/} in opencode.json | opencode.jsonc | package.json | package-lock.json | .gitignore) true ;; *) false ;; esac ;;
     *) false ;;
   esac
 }
@@ -247,7 +257,7 @@ show() {
   local kind
   printf 'install-cleanup.sh will remove what install.sh added:\n' >&3
   for kind in launchd keychain broker codex-plugin codex-marketplace claude-plugin claude-marketplace \
-    login opencode-auth opencode-provider opencode-config docker-block profile profile-file config cask formula homebrew clt file board-dir dir; do
+    login opencode-auth opencode-provider opencode-config agent-tree docker-block profile profile-file config cask formula homebrew clt file board-dir dir; do
     of_kind "$kind" | tr '\t' ' ' | sed 's/^/  /' >&3
   done
 }
@@ -733,8 +743,46 @@ files_and_dirs() {
   done <<<"$(of_kind dir | cut -f2 | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-)"
 }
 
+agent_tree() {
+  local path key index=0 keep= root_key
+  local -a paths
+  step "agent-pm runtime data"
+  umask 077
+  if ! grep -qxF "agent-tree"$'\t'"$HOME/.agent-pm" "$ledger"; then return; fi
+  root_key=$(LC_ALL=C printf '%q' "$HOME/.agent-pm")
+  grep -qxF -- "$root_key" "$state_dir/agent-tree.paths" || die "invalid agent-pm path inventory; records retained"
+  (
+    umask 077
+    agent_tree_find >"$state_dir/agent-tree.current"
+  ) || die "cannot inventory runtime data; records retained"
+  : >"$state_dir/agent-tree.index" || die "cannot write runtime inventory; records retained"
+  while IFS= read -r -d '' path; do
+    paths[index]=$path
+    LC_ALL=C printf '%q\t%s\n' "$path" "$index" >>"$state_dir/agent-tree.index" || die "cannot write runtime inventory; records retained"
+    index=$((index + 1))
+  done <"$state_dir/agent-tree.current"
+  LC_ALL=C sort "$state_dir/agent-tree.index" >"$state_dir/agent-tree.sorted" || die "cannot sort runtime inventory; records retained"
+  LC_ALL=C join -t $'\t' -v 2 "$state_dir/agent-tree.paths" "$state_dir/agent-tree.sorted" >"$state_dir/agent-tree.added" || die "cannot compare runtime inventory; records retained"
+  while IFS=$'\t' read -r key index; do
+    path=${paths[$index]}
+    [ -e "$path" ] || [ -L "$path" ] || continue
+    rm -rf -- "$path" || die "cannot remove runtime data; its records stay for a rerun"
+  done <"$state_dir/agent-tree.added"
+  (
+    shopt -s dotglob nullglob
+    for path in "$HOME/.agent-pm/"*; do
+      case $path in
+        "$state_dir") ;;
+        "$HOME/.agent-pm/board") keep=${keep:-board} ;;
+        *) keep=original; break ;;
+      esac
+    done
+    printf '%s' "$keep"
+  )
+}
+
 main() {
-  local platform agent_root=
+  local platform agent_root= keep_root= path
   set +x
   parse_args "$@"
   platform=$(uname -sm)
@@ -746,13 +794,14 @@ main() {
     exit 0
   fi
   validate
+  [ ! -f "$state_dir/agent-tree.pending" ] || die "path inventory is incomplete; rerun install.sh before cleanup; nothing removed"
   protected_dirs
   show
   if [ -z "$yes" ] && ! ask_yn "Remove all of this?"; then die "nothing removed"; fi
   trap on_exit EXIT
   sudo_once
   if [ -x "$root/opt/homebrew/bin/brew" ]; then eval "$("$root/opt/homebrew/bin/brew" shellenv)"; fi
-  if grep -qx "dir"$'\t'"$HOME/.agent-pm" "$ledger"; then agent_root=1; fi
+  if grep -qxF "dir"$'\t'"$HOME/.agent-pm" "$ledger"; then agent_root=1; fi
   launchd_jobs
   board_dirs
   keychain_items
@@ -763,15 +812,38 @@ main() {
   profiles
   config_file
   opencode_configs
+  keep_root=$(agent_tree)
   brew_packages
   homebrew_and_clt
   files_and_dirs
   step "~/.agent-pm"
-  if grep -vx "dir"$'\t'"$HOME/.agent-pm" "$ledger" | grep -q .; then
+  if grep -vxF -e "dir"$'\t'"$HOME/.agent-pm" -e "agent-tree"$'\t'"$HOME/.agent-pm" "$ledger" | grep -q .; then
     die "records no step removed are left in $ledger"
   fi
-  rm -rf "$state_dir"
-  if [ -n "$agent_root" ] && [ ! -e "$HOME/.agent-pm/board" ]; then rm -rf "$HOME/.agent-pm"; fi
+  if [ -n "$agent_root" ]; then
+    if [ "$keep_root" = original ]; then
+      (
+        shopt -s dotglob nullglob
+        for path in "$state_dir/"*; do
+          case $path in "$ledger" | "$state_dir/agent-tree.paths") continue ;; esac
+          rm -rf -- "$path"
+        done
+      )
+      : >"$state_dir/agent-tree.cleaned"
+      say "    kept preexisting files; path inventory and directory record retained"
+    elif [ -n "$keep_root" ] || [ -e "$HOME/.agent-pm/board" ] || [ -L "$HOME/.agent-pm/board" ]; then
+      rm -rf "$state_dir"
+      mkdir -p "$state_dir"
+      printf 'dir\t%s\n' "$HOME/.agent-pm" >"$ledger"
+      say "    kept preexisting files or board; directory record retained"
+    elif ! rm -rf "$HOME/.agent-pm"; then
+      mkdir -p "$state_dir"
+      printf 'dir\t%s\n' "$HOME/.agent-pm" >"$ledger"
+      die "cannot remove $HOME/.agent-pm; its record stays for a rerun"
+    fi
+  else
+    rm -rf "$state_dir"
+  fi
   current=
   say "Removed what install.sh added."
 }

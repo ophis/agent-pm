@@ -241,6 +241,30 @@ under_home() {
   return 0
 }
 
+# Inventory paths before dependencies exist; %q keeps each name on one line without evaluating it.
+agent_tree_snapshot() {
+  local path
+  (
+    umask 077
+    agent_tree_find >"$state_dir/agent-tree.raw"
+    while IFS= read -r -d '' path; do
+      LC_ALL=C printf '%q\n' "$path"
+    done <"$state_dir/agent-tree.raw" >"$state_dir/agent-tree.unsorted"
+    LC_ALL=C sort "$state_dir/agent-tree.unsorted" >"$state_dir/agent-tree.paths.tmp"
+  )
+  mv "$state_dir/agent-tree.paths.tmp" "$state_dir/agent-tree.paths"
+  rm -f "$state_dir/agent-tree.raw" "$state_dir/agent-tree.unsorted"
+}
+
+# Shared with install-cleanup.sh; find -path consumes a pattern even when the shell argument is quoted.
+agent_tree_find() {
+  local pattern=$HOME/.agent-pm char
+  for char in '\' '*' '?' '[' ']'; do
+    pattern=${pattern//"$char"/\\$char}
+  done
+  find -H "$HOME/.agent-pm" \( -path "$pattern/install" -o -path "$pattern/board" \) -prune -o -print0
+}
+
 # Exit 0 when the fields are a Ledger record the cleanup can act on.
 ledger_valid() {
   local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
@@ -250,6 +274,7 @@ ledger_valid() {
     docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
     clt:1 | broker:1) true ;;
+    agent-tree:2) [ "$2" = "$HOME/.agent-pm" ] ;;
     config:2) case $2 in created | backup) true ;; *) false ;; esac ;;
     formula:2) case $2 in gh | tmux | git | python | go | node) true ;; *) false ;; esac ;;
     cask:2) case $2 in iterm2 | claude-code | codex | docker-desktop) true ;; *) false ;; esac ;;
@@ -259,7 +284,7 @@ ledger_valid() {
     launchd:2) case $2 in router | promote) true ;; *) false ;; esac ;;
     keychain:3) [[ $2 =~ $plain ]] && [[ $3 =~ $plain ]] ;;
     opencode-auth:3 | opencode-provider:3) under_home "$2" && [[ $3 =~ $name_pattern ]] ;;
-    opencode-config:2) under_home "$2" && case ${2##*/} in opencode.json | opencode.jsonc) true ;; *) false ;; esac ;;
+    opencode-config:2) under_home "$2" && case ${2##*/} in opencode.json | opencode.jsonc | package.json | package-lock.json | .gitignore) true ;; *) false ;; esac ;;
     *) false ;;
   esac
 }
@@ -286,7 +311,7 @@ recorded() { [ -f "$ledger" ] && grep -qxF -- "$(
 )" "$ledger"; }
 
 # Records directory $1 when it does not exist yet.
-record_dir() { [ -e "$1" ] || ledger_add dir "$1"; }
+record_dir() { [ -e "$1" ] || [ -L "$1" ] || ledger_add dir "$1"; }
 
 # Records file $1 when it does not exist yet.
 record_file() { [ -e "$1" ] || ledger_add file "$1"; }
@@ -1111,6 +1136,7 @@ opencode_install() {
   formula node
   record_dir "$opencode_prefix"
   record_dir "${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
+  record_dir "${XDG_DATA_HOME:-$HOME/.local/share}/opentui"
   record_dir "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
   record_dir "${XDG_STATE_HOME:-$HOME/.local/state}/opencode"
   record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/opencode"
@@ -1189,8 +1215,8 @@ opencode_plugin() {
     [ -d "$dir" ] && [ -n "$had" ] || had=unknown
     say "    $spec: $ref is at ${commit:0:12}, OpenCode's copy at ${had:0:12}: downloading it again"
   fi
-  for file in "$conf/opencode.json" "$conf/opencode.jsonc"; do
-    if [ -f "$file" ] && ! recorded opencode-config "$file"; then
+  for file in "$conf/opencode.json" "$conf/opencode.jsonc" "$conf/package.json" "$conf/package-lock.json" "$conf/.gitignore"; do
+    if [ -f "$file" ] && ! recorded file "$file" && ! recorded opencode-config "$file"; then
       cp "$file" "$state_dir/${file##*/}.orig"
       ledger_add opencode-config "$file"
     fi
@@ -2275,6 +2301,19 @@ main() {
   exec 3<>"$(terminal)"
   trap on_exit EXIT
   [ -d "$HOME/.agent-pm" ] || ledger_add dir "$HOME/.agent-pm"
+  if ! recorded agent-tree "$HOME/.agent-pm" || [ ! -f "$state_dir/agent-tree.paths" ] \
+    || [ -f "$state_dir/agent-tree.cleaned" ] || [ -f "$state_dir/agent-tree.pending" ]; then
+    ledger_add agent-tree "$HOME/.agent-pm"
+    : >"$state_dir/agent-tree.pending"
+    agent_tree_snapshot
+    rm -f "$state_dir/agent-tree.pending" "$state_dir/agent-tree.cleaned"
+  fi
+  # Record tool state before Homebrew, logins or launcher installation can create it.
+  record_dir "$HOME/.homebrew"
+  record_file "$HOME/.homebrew/trust.json"
+  record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/gh"
+  record_dir "${XDG_STATE_HOME:-$HOME/.local/state}/gh"
+  record_dir "${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv}"
   # An installed board already has Python; reject deselecting it with job flags before privileged work.
   if [ -n "$jobs_flag" ] && [ "$(state_get board)" = yes ]; then
     PATH="${HOMEBREW_PREFIX:-$root/opt/homebrew}/bin:$PATH" answers

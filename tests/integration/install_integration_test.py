@@ -35,6 +35,7 @@ REAL = (
     "chmod",
     "sleep",
     "sort",
+    "join",
     "find",
     "cut",
     "dirname",
@@ -92,6 +93,7 @@ SHARED = (
     "ask_yn",
     "under_home",
     "ledger_valid",
+    "agent_tree_find",
     "sudo_once",
     "sudo_end",
     "terminal",
@@ -120,6 +122,9 @@ chmod 755 "$target/agent-pm-broker"
 CTMUX = """#!/bin/sh
 echo "ctmux $*" >> "$LOG"
 mkdir -p "$HOME/.agent-pm/bin"
+uv_cache=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv}
+mkdir -p "$uv_cache"
+printf 'fake uv cache' > "$uv_cache/installer-cache"
 for n in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-orchestrator; do
   printf '#!/bin/sh\\n' > "$HOME/.agent-pm/bin/$n"
   chmod 755 "$HOME/.agent-pm/bin/$n"
@@ -1637,6 +1642,358 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertEqual(self.snapshot(), before)
 
+    def test_opencode_cleanup_two_upgraded_install_cycles(self):
+        shutil.rmtree(self.agent_pm)
+        conf = Path(self.home, ".config/opencode")
+        for cycle in range(2):
+            with self.subTest(cycle=cycle):
+                self.assert_ok(self.opencode_only())
+                (self.fakes / "commit").write_text(NEW if cycle == 0 else OLD)
+                self.assert_ok(self.opencode_rerun())
+                path = conf / "opencode.jsonc"
+                self.assertNotIn(f"opencode-config\t{path}", self.ledger())
+                self.assertFalse(Path(self.agent_pm, "install/opencode.jsonc.orig").exists())
+                self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+                self.assertFalse(path.exists())
+                for name in ("node_modules", "package.json", "package-lock.json", ".gitignore"):
+                    self.assertFalse((conf / name).exists(), name)
+                self.assertFalse(conf.exists())
+                self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_opencode_cleanup_two_cycles_restore_user_jsonc(self):
+        path = Path(self.home, ".config/opencode/opencode.jsonc")
+        path.parent.mkdir(parents=True)
+        original = b'{"theme": "mine", "plugin": ["user-plugin"]}\n  \n'
+        path.write_bytes(original)
+        originals = {
+            "package.json": b'{"dependencies":{"user-plugin":"1.0.0"}}\n',
+            "package-lock.json": b'{"name":"user-lock","lockfileVersion":3}\n',
+            ".gitignore": b"# user ignores\nuser-cache/\n",
+        }
+        for name, contents in originals.items():
+            (path.parent / name).write_bytes(contents)
+        for cycle in range(2):
+            with self.subTest(cycle=cycle):
+                self.assert_ok(self.opencode_only())
+                (self.fakes / "commit").write_text(NEW if cycle == 0 else OLD)
+                self.assert_ok(self.opencode_rerun())
+                self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+                self.assertEqual(path.read_bytes(), original)
+                self.assertFalse((path.parent / "node_modules").exists())
+                for name, contents in originals.items():
+                    self.assertEqual((path.parent / name).read_bytes(), contents, name)
+
+    def runtime_files(self):
+        paths = [
+            Path(self.agent_pm, relative)
+            for relative in (
+                "logs/runs.jsonl",
+                "work/X/result.txt",
+                "adhoc/X/result.txt",
+                "managers/X/state.json",
+                "docker-state/X/state.json",
+                "workers/X/state.json",
+                "tmp/X/state.json",
+                "unrecorded/cache",
+                ".runtime/cache",
+            )
+        ]
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("runtime data")
+        return paths
+
+    def test_cleanup_removes_runtime_data_and_created_root(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(self.opencode_only())
+        self.runtime_files()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_cleanup_keeps_root_ownership_across_board_and_install_cycles(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(
+            self.fresh(
+                "--clients",
+                "opencode",
+                "--docker",
+                "--board",
+                "local",
+                "--no-launchd",
+                opencode=PROVIDER_ANSWERS,
+                logins=[(PEM_Q, ""), (OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)],
+                then=[(WRITE_Q, "y")] * 2,
+            )
+        )
+        board = Path(self.agent_pm, "board")
+        issue = board / "unassigned/keep.md"
+        issue.write_text("keep")
+        runtime = self.runtime_files()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
+        self.assertEqual(issue.read_text(), "keep")
+        for path in runtime:
+            self.assertFalse(path.exists(), str(path))
+        self.assertEqual(
+            {path.name for path in Path(self.agent_pm).iterdir()}, {"board", "install"}
+        )
+        self.assert_ok(self.opencode_only())
+        (self.fakes / "commit").write_text(NEW)
+        self.assert_ok(self.opencode_rerun())
+        runtime = self.runtime_files()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
+        self.assertEqual(issue.read_text(), "keep")
+        for path in runtime:
+            self.assertFalse(path.exists(), str(path))
+        self.assertFalse(Path(self.home, ".config/opencode").exists())
+        shutil.rmtree(board)
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_cleanup_preserves_preexisting_user_files_and_runtime_directories(self):
+        user = Path(self.agent_pm, "keep.txt")
+        user.write_text("keep")
+        original = Path(self.agent_pm, "work/user-project/result.txt")
+        original.parent.mkdir(parents=True)
+        original.write_text("user work")
+        special = original.parent / "user [*]\tline\n.txt"
+        special.write_text("user special")
+        self.assert_ok(self.opencode_only())
+        new = original.parent / "runtime-result.txt"
+        new.write_text("runtime data")
+        special_new = original.parent / "runtime [*]\tline\n.tmp"
+        special_new.write_text("runtime data")
+        other = Path(self.agent_pm, "work/X/result.txt")
+        other.parent.mkdir()
+        other.write_text("runtime data")
+        for name in ("logs", "adhoc", "managers", "docker-state", "workers", "tmp"):
+            path = Path(self.agent_pm, name, "runtime-data")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("runtime data")
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(user.read_text(), "keep")
+        self.assertEqual(original.read_text(), "user work")
+        self.assertEqual(special.read_text(), "user special")
+        self.assertFalse(special_new.exists())
+        self.assertFalse(new.exists())
+        self.assertFalse(other.parent.exists())
+        self.assertFalse(self.ledger())
+        for name in ("logs", "adhoc", "managers", "docker-state", "workers", "tmp"):
+            self.assertFalse(Path(self.agent_pm, name).exists(), name)
+
+    def test_cleanup_preserves_preexisting_dangling_runtime_link(self):
+        link = Path(self.agent_pm, "work")
+        target = Path(self.home, "unmounted-user-work")
+        link.symlink_to(target)
+        self.assert_ok(self.opencode_only())
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.readlink(), target)
+
+    def test_cleanup_runtime_removal_failure_keeps_records_for_retry(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(self.opencode_only())
+        locked = Path(self.agent_pm, "unrecorded/locked")
+        locked.mkdir(parents=True)
+        (locked / "runtime.txt").write_text("runtime data")
+        locked.chmod(0o500)
+        self.addCleanup(lambda: locked.exists() and locked.chmod(0o700))
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn(f"dir\t{self.agent_pm}", self.ledger())
+        self.assertIn(f"agent-tree\t{self.agent_pm}", self.ledger())
+        locked.chmod(0o700)
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_cleanup_final_root_removal_failure_restores_ownership_record(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(self.opencode_only())
+        (self.fakes / "fail-root-remove").touch()
+        rm = self.bin / "rm"
+        rm.unlink()
+        executable(
+            rm,
+            """#!/bin/sh
+if [ "$#" = 2 ] && [ "$1" = -rf ] && [ "$2" = "$HOME/.agent-pm" ] && [ -f "$FAKES/fail-root-remove" ]; then
+  /bin/rm -f "$FAKES/fail-root-remove" "$HOME/.agent-pm/install/added"
+  exit 1
+fi
+exec /bin/rm "$@"
+""",
+        )
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn("its record stays for a rerun", result.stderr)
+        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_cleanup_runtime_data_with_installer_owned_python(self):
+        shutil.rmtree(self.agent_pm)
+        (self.bin / "python3").unlink()
+        executable(self.fakes / "apps/python3", f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        self.assert_ok(self.opencode_only())
+        self.assertIn("formula\tpython", self.ledger())
+        self.runtime_files()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+        self.assertFalse((self.root / "opt/homebrew/bin/python3").exists())
+
+    def user_file_after_kept_board(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(self.opencode_only())
+        board = Path(self.agent_pm, "board")
+        board.mkdir()
+        (board / "keep.md").write_text("board data")
+        self.assert_ok(self.cleanup("--yes"))
+        shutil.rmtree(board)
+        original = Path(self.agent_pm, "keep.txt")
+        original.write_text("preexisting user data")
+        self.assert_ok(self.opencode_only())
+        return original
+
+    def test_cleanup_retries_preserve_user_file_after_kept_board(self):
+        original = self.user_file_after_kept_board()
+        (self.fakes / "fail").write_text("brew uninstall node")
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn(f"agent-tree\t{self.agent_pm}", self.ledger())
+        self.assertEqual(original.read_text(), "preexisting user data")
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(original.read_text(), "preexisting user data")
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(original.read_text(), "preexisting user data")
+        original.unlink()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_cleanup_repeated_success_preserves_user_file_after_kept_board(self):
+        original = self.user_file_after_kept_board()
+        for _ in range(2):
+            self.assert_ok(self.cleanup("--yes"))
+            self.assertEqual(original.read_text(), "preexisting user data")
+        second = Path(self.agent_pm, "second.txt")
+        second.write_text("user data before next install")
+        self.assert_ok(self.opencode_only())
+        self.runtime_files()
+        for _ in range(2):
+            self.assert_ok(self.cleanup("--yes"))
+            self.assertEqual(original.read_text(), "preexisting user data")
+            self.assertEqual(second.read_text(), "user data before next install")
+        original.unlink()
+        second.unlink()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_failed_baseline_refresh_preserves_user_files_until_install_retry(self):
+        original = self.user_file_after_kept_board()
+        self.assert_ok(self.cleanup("--yes"))
+        second = Path(self.agent_pm, "second.txt")
+        second.write_text("user data before next install")
+        find = self.bin / "find"
+        find.unlink()
+        executable(find, "#!/bin/sh\nexit 1\n")
+        result = self.run_install("--clients", "claude", "--no-docker")
+        self.assertEqual(result.code, 1, result.stderr)
+        result = self.run_install("--yes", script=CLEANUP)
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn("path inventory is incomplete", result.stderr)
+        self.assertEqual(original.read_text(), "preexisting user data")
+        self.assertEqual(second.read_text(), "user data before next install")
+        find.unlink()
+        find.symlink_to(shutil.which("find"))
+        self.assert_ok(self.opencode_only())
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(original.read_text(), "preexisting user data")
+        self.assertEqual(second.read_text(), "user data before next install")
+
+    def test_cleanup_after_bootstrap_failure_without_python(self):
+        shutil.rmtree(self.agent_pm)
+        (self.bin / "python3").unlink()
+        (self.fakes / "fail").write_text(
+            "curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
+        )
+        result = self.run_install(
+            "--clients", "claude", "--no-docker", answers=[(SUDO_Q, PASSWORD)]
+        )
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_cleanup_keeps_board_with_glob_characters_in_home(self):
+        home = Path(self.home, "user[1]*?")
+        home.mkdir()
+        self.env["HOME"] = str(home)
+        self.root = home / "root"
+        (self.root / "dev").mkdir(parents=True)
+        self.env["AGENT_PM_INSTALL_ROOT"] = str(self.root)
+        self.assert_ok(self.fresh("--clients", "claude", "--no-docker"))
+        root = home / ".agent-pm"
+        board = root / "board"
+        board.mkdir()
+        issue = board / "keep.md"
+        issue.write_text("board data")
+        runtime = root / "runtime.txt"
+        runtime.write_text("runtime data")
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(issue.read_text(), "board data")
+        self.assertFalse(runtime.exists())
+        self.assertEqual({path.name for path in root.iterdir()}, {"board", "install"})
+
+    def tool_artifacts(self):
+        return [
+            Path(self.env.get("XDG_DATA_HOME", Path(self.home, ".local/share")), "opentui"),
+            Path(self.env.get("XDG_CACHE_HOME", Path(self.home, ".cache")), "gh"),
+            Path(self.env.get("XDG_STATE_HOME", Path(self.home, ".local/state")), "gh"),
+            Path(
+                self.env.get("UV_CACHE_DIR")
+                or Path(self.env.get("XDG_CACHE_HOME", Path(self.home, ".cache")), "uv")
+            ),
+            Path(self.home, ".homebrew/trust.json"),
+        ]
+
+    def test_cleanup_tracks_tool_artifacts_and_lists_them(self):
+        for cycle in range(2):
+            with self.subTest(cycle=cycle):
+                self.assert_ok(self.opencode_only())
+                for path in self.tool_artifacts():
+                    self.assertTrue(path.exists(), str(path))
+                    kind = "file" if path.name == "trust.json" else "dir"
+                    self.assertIn(f"{kind}\t{path}", self.ledger())
+                result = self.cleanup("--yes")
+                self.assert_ok(result)
+                for path in self.tool_artifacts():
+                    self.assertIn(str(path), result.tty)
+                    self.assertFalse(path.exists(), str(path))
+                self.assertFalse(Path(self.home, ".homebrew").exists())
+
+    def test_cleanup_preserves_preexisting_tool_artifacts(self):
+        sentinels = []
+        for path in self.tool_artifacts():
+            if path.name != "trust.json":
+                path.mkdir(parents=True)
+                path = path / "user-data"
+            else:
+                path.parent.mkdir(parents=True)
+            path.write_text("user data")
+            sentinels.append(path)
+        self.assert_ok(self.opencode_only())
+        for path in self.tool_artifacts():
+            self.assertFalse(any(record.endswith("\t" + str(path)) for record in self.ledger()))
+        self.assert_ok(self.cleanup("--yes"))
+        for path in sentinels:
+            self.assertEqual(path.read_text(), "user data")
+
+    def test_cleanup_tracks_xdg_tool_artifacts_and_uv_override(self):
+        for key in ("XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "UV_CACHE_DIR"):
+            self.env[key] = str(Path(self.home, key.lower()))
+        self.assert_ok(self.opencode_only())
+        self.assert_ok(self.cleanup("--yes"))
+        for path in self.tool_artifacts():
+            self.assertFalse(path.exists(), str(path))
+
     def test_opencode_cleanup_restores_legacy_backup_without_installed_record(self):
         path = Path(self.home, ".config/opencode/opencode.jsonc")
         path.parent.mkdir(parents=True)
@@ -2439,7 +2796,7 @@ class InstallTest(Case):
         self.assertIn("security delete-generic-password -s linear-pm -a linear-pm", self.calls())
         self.assertIn("claude plugin uninstall agent-pm@agent-pm", self.calls())
         self.assertFalse(self.config().exists())
-        self.assertFalse(Path(self.agent_pm, "install").exists())
+        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
         for job in ("router", "promote"):
             self.assertFalse(
                 Path(self.home, f"Library/LaunchAgents/com.ophis.agent-pm.{job}.plist").exists()
@@ -2450,11 +2807,9 @@ class InstallTest(Case):
         runtime.parent.rmdir()
         data.parent.rmdir()
         board.rmdir()
-        result = self.cleanup()
+        result = self.cleanup("--yes")
         self.assert_ok(result)
-        self.assertIn("nothing recorded by install.sh; nothing to remove", result.stderr)
-        self.assertFalse([c for c in self.calls() if c.startswith("sudo")])
-        self.assertFalse(board.exists())
+        self.assertFalse(Path(self.agent_pm).exists())
 
     def test_board_local_cleanup_keeps_router_state(self):
         shutil.rmtree(self.agent_pm)
@@ -2477,7 +2832,7 @@ class InstallTest(Case):
         self.assertEqual(state.read_text(), "{}")
         self.assertFalse((board / "unassigned").exists())
         self.assertEqual(result.stderr.count(f"kept {board}: not empty"), 1)
-        self.assertFalse(Path(self.agent_pm, "install").exists())
+        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
         self.assertFalse(self.config().exists())
 
     def test_board_linear_without_jobs(self):
@@ -2965,6 +3320,12 @@ class InstallTest(Case):
             self.ledger(),
             [
                 f"dir\t{h}/.agent-pm",
+                f"agent-tree\t{h}/.agent-pm",
+                f"dir\t{h}/.homebrew",
+                f"file\t{h}/.homebrew/trust.json",
+                f"dir\t{h}/.cache/gh",
+                f"dir\t{h}/.local/state/gh",
+                f"dir\t{h}/.cache/uv",
                 f"homebrew\t{self.root}/opt/homebrew",
                 "clt",
                 f"profile-file\t{h}/.zprofile",

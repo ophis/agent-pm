@@ -211,6 +211,9 @@ def homebrew_sudo():
 
 
 def brew(args):
+    trust = Path(os.environ["HOME"], ".homebrew/trust.json")
+    if not trust.exists():
+        mark(trust, "{}")
     if args == ["shellenv"]:
         out(f'export HOMEBREW_PREFIX="{PREFIX}"; export PATH="{PREFIX}/bin:$PATH";\n')
         return 0
@@ -321,6 +324,11 @@ def login(client, args, status, start, logout):
 
 
 def gh(args):
+    for path in (
+        xdg("XDG_CACHE_HOME", ".cache") / "gh",
+        xdg("XDG_STATE_HOME", ".local/state") / "gh",
+    ):
+        mark(path / "installer-cache", "fake gh cache")
     logout = ["auth", "logout", "--hostname", "github.com"]
     return login("gh", args, ["auth", "status"], ["auth", "login", *args[2:]], logout)
 
@@ -667,6 +675,7 @@ def opencode_plugin(spec):
 
 
 def opencode(args):
+    mark(xdg("XDG_DATA_HOME", ".local/share") / "opentui/installer-cache", "fake OpenTUI cache")
     if args[:3] == ["plugin", "-g", "-f"] and len(args) == 4:
         return opencode_plugin(args[3])
     if args == ["--version"]:
