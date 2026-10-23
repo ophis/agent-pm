@@ -1190,7 +1190,7 @@ opencode_plugin() {
     say "    $spec: $ref is at ${commit:0:12}, OpenCode's copy at ${had:0:12}: downloading it again"
   fi
   for file in "$conf/opencode.json" "$conf/opencode.jsonc"; do
-    if [ -f "$file" ] && ! recorded opencode-config "$file"; then
+    if [ -f "$file" ] && ! recorded file "$file" && ! recorded opencode-config "$file"; then
       cp "$file" "$state_dir/${file##*/}.orig"
       ledger_add opencode-config "$file"
     fi

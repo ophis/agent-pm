@@ -102,7 +102,9 @@ exclude the selected name must be adjusted by the user before adding it. Config 
 and support JSONC comments, trailing commas, UTF-8 BOM and duplicate keys (last value wins). Installer cleanup removes
 the provider it added if its definition is unchanged. Plugin cleanup then restores the configuration
 backup from before the first plugin install, including the user's original providers and settings;
-edits made after that backup revert.
+edits made after that backup revert. A configuration created by this installation stays recorded as
+created across upgrades and is removed with the plugin's added files (`node_modules`, `package.json`,
+`package-lock.json`, `.gitignore`), including after repeated install/cleanup cycles. Preexisting files stay.
 
 Set each provider's `context` and `[clients.opencode] ollama_context` to the server's real context window (Ollama's `OLLAMA_CONTEXT_LENGTH`): a smaller value compacts early, a larger one lets a request overflow. Both default to 65536.
 

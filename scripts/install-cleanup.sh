@@ -771,7 +771,14 @@ main() {
     die "records no step removed are left in $ledger"
   fi
   rm -rf "$state_dir"
-  if [ -n "$agent_root" ] && [ ! -e "$HOME/.agent-pm/board" ]; then rm -rf "$HOME/.agent-pm"; fi
+  if [ -n "$agent_root" ]; then
+    # A board or files added by the user keep the root, and its ownership survives the next install.
+    if ! rmdir "$HOME/.agent-pm" 2>/dev/null; then
+      mkdir -p "$state_dir"
+      printf 'dir\t%s\n' "$HOME/.agent-pm" >"$ledger"
+      say "    kept $HOME/.agent-pm: not empty; directory record retained"
+    fi
+  fi
   current=
   say "Removed what install.sh added."
 }

@@ -1637,6 +1637,83 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertEqual(self.snapshot(), before)
 
+    def test_opencode_cleanup_two_upgraded_install_cycles(self):
+        shutil.rmtree(self.agent_pm)
+        conf = Path(self.home, ".config/opencode")
+        for cycle in range(2):
+            with self.subTest(cycle=cycle):
+                self.assert_ok(self.opencode_only())
+                (self.fakes / "commit").write_text(NEW if cycle == 0 else OLD)
+                self.assert_ok(self.opencode_rerun())
+                path = conf / "opencode.jsonc"
+                self.assertNotIn(f"opencode-config\t{path}", self.ledger())
+                self.assertFalse(Path(self.agent_pm, "install/opencode.jsonc.orig").exists())
+                self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+                self.assertFalse(path.exists())
+                for name in ("node_modules", "package.json", "package-lock.json", ".gitignore"):
+                    self.assertFalse((conf / name).exists(), name)
+                self.assertFalse(conf.exists())
+                self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_opencode_cleanup_two_cycles_restore_user_jsonc(self):
+        path = Path(self.home, ".config/opencode/opencode.jsonc")
+        path.parent.mkdir(parents=True)
+        original = b'{"theme": "mine", "plugin": ["user-plugin"]}\n  \n'
+        path.write_bytes(original)
+        for cycle in range(2):
+            with self.subTest(cycle=cycle):
+                self.assert_ok(self.opencode_only())
+                (self.fakes / "commit").write_text(NEW if cycle == 0 else OLD)
+                self.assert_ok(self.opencode_rerun())
+                self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+                self.assertEqual(path.read_bytes(), original)
+                for name in ("node_modules", "package.json", "package-lock.json", ".gitignore"):
+                    self.assertFalse((path.parent / name).exists(), name)
+
+    def test_cleanup_keeps_root_ownership_across_board_and_install_cycles(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(
+            self.fresh(
+                "--clients",
+                "opencode",
+                "--docker",
+                "--board",
+                "local",
+                "--no-launchd",
+                opencode=PROVIDER_ANSWERS,
+                logins=[(PEM_Q, ""), (OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)],
+                then=[(WRITE_Q, "y")] * 2,
+            )
+        )
+        board = Path(self.agent_pm, "board")
+        issue = board / "unassigned/keep.md"
+        issue.write_text("keep")
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
+        self.assertEqual(issue.read_text(), "keep")
+        self.assert_ok(self.opencode_only())
+        (self.fakes / "commit").write_text(NEW)
+        self.assert_ok(self.opencode_rerun())
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
+        self.assertEqual(issue.read_text(), "keep")
+        self.assertFalse(Path(self.home, ".config/opencode").exists())
+        shutil.rmtree(board)
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_cleanup_preserves_user_file_added_under_created_root(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(self.opencode_only())
+        user = Path(self.agent_pm, "keep.txt")
+        user.write_text("keep")
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(user.read_text(), "keep")
+        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
+        user.unlink()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
     def test_opencode_cleanup_restores_legacy_backup_without_installed_record(self):
         path = Path(self.home, ".config/opencode/opencode.jsonc")
         path.parent.mkdir(parents=True)
@@ -2439,7 +2516,7 @@ class InstallTest(Case):
         self.assertIn("security delete-generic-password -s linear-pm -a linear-pm", self.calls())
         self.assertIn("claude plugin uninstall agent-pm@agent-pm", self.calls())
         self.assertFalse(self.config().exists())
-        self.assertFalse(Path(self.agent_pm, "install").exists())
+        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
         for job in ("router", "promote"):
             self.assertFalse(
                 Path(self.home, f"Library/LaunchAgents/com.ophis.agent-pm.{job}.plist").exists()
@@ -2450,11 +2527,9 @@ class InstallTest(Case):
         runtime.parent.rmdir()
         data.parent.rmdir()
         board.rmdir()
-        result = self.cleanup()
+        result = self.cleanup("--yes")
         self.assert_ok(result)
-        self.assertIn("nothing recorded by install.sh; nothing to remove", result.stderr)
-        self.assertFalse([c for c in self.calls() if c.startswith("sudo")])
-        self.assertFalse(board.exists())
+        self.assertFalse(Path(self.agent_pm).exists())
 
     def test_board_local_cleanup_keeps_router_state(self):
         shutil.rmtree(self.agent_pm)
@@ -2477,7 +2552,7 @@ class InstallTest(Case):
         self.assertEqual(state.read_text(), "{}")
         self.assertFalse((board / "unassigned").exists())
         self.assertEqual(result.stderr.count(f"kept {board}: not empty"), 1)
-        self.assertFalse(Path(self.agent_pm, "install").exists())
+        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
         self.assertFalse(self.config().exists())
 
     def test_board_linear_without_jobs(self):
