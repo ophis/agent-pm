@@ -110,6 +110,7 @@ func TestCodexVersionLifecycle(t *testing.T) {
 			switch mode {
 			case "current":
 				v.target = "0.163.0"
+				w.versions = []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.163.0"}
 			case "registry_unavailable":
 				v.registryErr = errors.New("offline")
 				w.versions = []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.163.0"}
@@ -331,7 +332,8 @@ func TestImageMinimumVersion(t *testing.T) {
 		t.Run(version, func(t *testing.T) {
 			v := defaultVersions()
 			v.target = version
-			h := Host{Versions: v}
+			h, _ := startHost(&world{labels: goodLabels(), versions: []string{"codex-cli " + version}}, &fakeCreds{})
+			h.Versions = v
 			_, _, err := h.updateCodex(context.Background(), "container", "arm64", Clients{Codex: "codex-cli " + version}, codex.Installation{Version: "0.163.0"})
 			blocked := version == "0.162.999" || version == "invalid"
 			if (err != nil) != blocked {
@@ -344,5 +346,20 @@ func TestImageMinimumVersion(t *testing.T) {
 				t.Fatal("registry queried before image validation")
 			}
 		})
+	}
+}
+
+func TestCurrentImageRequiresCompanionBeforeSecrets(t *testing.T) {
+	w := &world{labels: goodLabels(), execErr: failOn("probe", errors.New("image companion missing"))}
+	h, d := startHost(w, &fakeCreds{})
+	h.Versions = defaultVersions()
+	h.Codex = &fakeCodexCreds{}
+	if _, err := h.Start(context.Background(), codexManifest(t)); err == nil {
+		t.Fatal("current image accepted without its companion")
+	}
+	for _, call := range d.calls {
+		if slices.Contains(call, "inject-codex") {
+			t.Fatal("credentials injected before image companion verification")
+		}
 	}
 }

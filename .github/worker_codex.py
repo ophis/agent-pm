@@ -15,366 +15,7 @@ from pathlib import Path
 DOCKERFILE = Path(__file__).resolve().parents[1] / "broker/internal/launcher/assets/Dockerfile"
 PYTHON = "/opt/agent-pm/venv/bin/python"
 BOOTSTRAP = "/opt/agent-pm/lib/bootstrap.py"
-TOOL_PROBE = r"""
-import json, os, subprocess, tempfile, threading, uuid
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
-
-with tempfile.TemporaryDirectory(prefix='codex-tools-') as temporary:
-    work = Path(temporary)
-    marker = uuid.uuid4().hex
-    (work / 'input.txt').write_text(marker)
-    observed = []
-    class Provider(BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-        def do_POST(self):
-            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-            observed.append(body)
-            if len(observed) == 1:
-                item = {'type': 'custom_tool_call', 'call_id': 'tool-1', 'name': 'exec',
-                        'input': 'text(await tools.exec_command({cmd:"cat input.txt",login:false}));'}
-            else:
-                item = {'type': 'message', 'role': 'assistant', 'id': 'msg-1',
-                        'content': [{'type': 'output_text', 'text': 'done'}]}
-            events = [
-                {'type': 'response.created', 'response': {'id': 'resp-' + str(len(observed))}},
-                {'type': 'response.output_item.done', 'item': item},
-                {'type': 'response.completed', 'response': {'id': 'resp-' + str(len(observed)),
-                    'usage': {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}}},
-            ]
-            data = ''.join('event: ' + event['type'] + '\ndata: ' + json.dumps(event) + '\n\n'
-                           for event in events).encode()
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/event-stream')
-            self.send_header('Content-Length', str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-    server = HTTPServer(('127.0.0.1', 0), Provider)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        config = [
-            'model_provider="fixture"',
-            'model_providers.fixture={name="Fixture",base_url="http://127.0.0.1:'
-                + str(server.server_port) + '/v1",wire_api="responses",requires_openai_auth=false}',
-            'features.code_mode=true', 'features.code_mode_only=true',
-            'features.code_mode_host={enabled=true,disable_in_process_fallback=true}',
-            'features.code_mode_host_grpc=false',
-        ]
-        command = ['codex', '--no-daemon', '--dangerously-bypass-approvals-and-sandbox']
-        for value in config:
-            command.extend(['-c', value])
-        command.extend(['exec', '--skip-git-repo-check', '--json', '-m', 'gpt-5.4',
-                        'Read input.txt using the command tool.'])
-        env = {'HOME': temporary, 'CODEX_HOME': str(work / 'home'),
-               'PATH': '/opt/agent-pm/bin:/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8'}
-        result = subprocess.run(command, cwd=work, env=env, capture_output=True, timeout=60)
-        assert result.returncode == 0, result.stderr.decode(errors='replace')[-2000:]
-        assert len(observed) == 2, 'expected tool call and follow-up'
-        outputs = [item for item in observed[1]['input'] if item.get('type') == 'custom_tool_call_output']
-        assert marker in json.dumps(outputs), 'command did not read the fixture'
-        assert b'failed to spawn code-mode host' not in result.stderr
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-print('Offline Codex code-mode command turn: PASS')
-"""
-SKILLS_PROBE = """
-import json, os, stat, subprocess
-from pathlib import Path
-home = Path(os.environ['CODEX_HOME'])
-cache = Path('/opt/agent-pm/codex-plugins/plugins/cache')
-root, = (cache / 'claude-autopilot/autopilot').iterdir()
-manifest = next(path for path in (root / '.codex-plugin/plugin.json', root / '.claude-plugin/plugin.json') if path.is_file())
-skill = root / 'skills/light-build/SKILL.md'
-for path in (root, manifest, skill):
-    assert path.stat().st_uid == 0
-    assert not path.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-    assert not os.access(path, os.W_OK)
-assert home.joinpath('plugins/cache').resolve() == cache
-assert not root.is_symlink()
-assert json.loads(manifest.read_text())['name'] == 'autopilot'
-proc = subprocess.Popen(['codex', 'app-server'], stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-def request(identifier, method, params):
-    proc.stdin.write(json.dumps({'id': identifier, 'method': method, 'params': params}) + '\\n')
-    proc.stdin.flush()
-    for line in proc.stdout:
-        reply = json.loads(line)
-        if reply.get('id') == identifier:
-            assert 'error' not in reply
-            return reply['result']
-    raise AssertionError('app-server closed before its reply')
-try:
-    request(0, 'initialize', {'clientInfo': {'name': 'agent_pm_ci', 'title': 'Agent PM CI', 'version': '0.0.1'}})
-    proc.stdin.write(json.dumps({'method': 'initialized', 'params': {}}) + '\\n')
-    proc.stdin.flush()
-    found = request(1, 'skills/list', {'cwds': ['/workspace'], 'forceReload': True})
-    entry, = found['data']
-    assert entry['cwd'] == '/workspace'
-    assert not entry['errors']
-    loaded, = [s for s in entry['skills'] if s['name'] == 'autopilot:light-build']
-    assert loaded['enabled'] is True
-    assert loaded['pluginId'] == 'autopilot@claude-autopilot'
-    assert Path(loaded['path']).resolve() == skill.resolve()
-finally:
-    proc.terminate()
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=10)
-"""
-PROBE = """
-import json, os, stat, tempfile
-from pathlib import Path
-home = Path(os.environ['CODEX_HOME'])
-mounts = {}
-for line in Path('/proc/self/mountinfo').read_text().splitlines():
-    before, after = line.split(' - ', 1)
-    fields = before.split()
-    mounts[fields[4]] = (after.split()[0], set(fields[5].split(',')))
-for path in (str(home), '/run/agent-pm', '/run/agent-pm/secrets'):
-    kind, options = mounts[path]
-    assert kind == 'tmpfs'
-    assert {'noexec', 'nosuid', 'nodev'} <= options
-kind, options = mounts['/opt/agent-pm/runtime']
-assert kind == 'tmpfs' and 'noexec' not in options
-assert {'nosuid', 'nodev'} <= options
-runtime = Path('/opt/agent-pm/runtime')
-assert runtime.stat().st_uid == 0 and not runtime.stat().st_mode & 0o022
-assert not (runtime / 'codex').exists()
-secret = Path('/run/agent-pm/secrets/codex/auth.json')
-assert stat.S_IMODE(secret.stat().st_mode) == 0o400
-assert secret.stat().st_uid == os.getuid() != 0
-assert home.joinpath('auth.json').is_symlink()
-document = json.loads(secret.read_bytes())
-assert document['tokens']['refresh_token'] == ''
-assert document['auth_mode'] == 'chatgpt'
-assert document['tokens']['account_id'] == 'ci-fake'
-assert document['tokens']['id_token']
-identity = home / 'sessions/identity.txt'
-if identity.exists():
-    assert identity.read_text() == 'synthetic-native-identity'
-else:
-    identity.write_text('synthetic-native-identity')
-fd, temporary = tempfile.mkstemp(dir=home)
-with os.fdopen(fd, 'w') as output:
-    json.dump(document, output)
-os.replace(temporary, home / 'auth.json')
-assert not home.joinpath('auth.json').is_symlink()
-assert home.joinpath('auth.json').read_bytes()
-for path in (home / 'sessions').rglob('*'):
-    if path.is_file():
-        assert document['tokens']['access_token'].encode() not in path.read_bytes()
-"""
-
-
-RELOAD_PROBE = r"""
-import io, json, os, runpy, selectors, signal, subprocess, sys, time
-from pathlib import Path
-
-class ReloadExchange:
-    def __init__(self, before, after, publish, proactive=None):
-        self.before, self.after, self.publish = before, after, publish
-        self.proactive = proactive
-        self.natural_complete = False
-        self.stage = 1
-        self.complete = False
-        self.notifications = 0
-
-    def request(self, method, params):
-        return (json.dumps({'id': self.stage, 'method': method, 'params': params}) + '\n').encode()
-
-    def start(self):
-        return self.request('initialize', {
-            'clientInfo': {'name': 'agent_pm_ci_reload', 'title': None, 'version': '0.163.0'},
-            'capabilities': {'experimentalApi': False, 'explicitGatewayOauth': True},
-        })
-
-    def auth_request(self, refresh=False):
-        return self.request('getAuthStatus', {'includeToken': True, 'refreshToken': refresh})
-
-    def accept(self, message):
-        def reject():
-            raise ValueError('synthetic native reload failed')
-        if not isinstance(message, dict):
-            reject()
-        if 'method' in message:
-            if 'id' in message or not isinstance(message['method'], str):
-                reject()
-            self.notifications += 1
-            if self.notifications > 1024:
-                reject()
-            return []
-        if ('error' in message or type(message.get('id')) is not int
-                or message['id'] != self.stage or self.complete):
-            reject()
-        result = message.get('result')
-        if not isinstance(result, dict):
-            reject()
-        if self.stage == 1:
-            self.stage = 2
-            return [b'{"method":"initialized"}\n', self.auth_request()]
-        expected = self.before
-        if self.stage in (4, 5):
-            expected = self.after
-        elif self.stage == 6:
-            expected = self.proactive['near']
-        elif self.stage == 7:
-            expected = self.proactive['token']
-        if (result.get('authMethod') != 'chatgpt' or result.get('authToken') != expected
-                or result.get('requiresOpenaiAuth') is not True):
-            reject()
-        if self.stage in (4, 6):
-            if self.stage == 6:
-                self.proactive['publish_final']()
-                self.stage = 7
-            else:
-                self.stage = 5
-            return [self.auth_request()]
-        if self.stage == 2:
-            self.publish()
-            self.stage = 3
-            return [self.auth_request()]
-        if self.stage == 3:
-            self.stage = 4
-            return [self.auth_request(refresh=True)]
-        if self.stage == 5 and self.proactive is not None:
-            self.proactive['publish_near']()
-            self.stage = 6
-            return [self.auth_request(refresh=True)]
-        self.natural_complete = self.stage == 7
-        self.complete = True
-        return []
-
-    def summary(self):
-        return {'guarded_reload_completed': self.complete, 'natural_auth_reload_completed': self.natural_complete,
-                'notification_count': self.notifications}
-
-class BoundedLines:
-    def __init__(self):
-        self.pending = bytearray()
-        self.total = 0
-
-    def feed(self, data):
-        self.total += len(data)
-        if self.total > 1024 * 1024:
-            raise ValueError('synthetic native output limit')
-        self.pending.extend(data)
-        messages = []
-        while b'\n' in self.pending:
-            line, _, remaining = self.pending.partition(b'\n')
-            self.pending = remaining
-            if len(line) > 65536:
-                raise ValueError('synthetic native line limit')
-            messages.append(json.loads(line))
-        if len(self.pending) > 65536:
-            raise ValueError('synthetic native line limit')
-        return messages
-
-    def finish(self):
-        if self.pending:
-            raise ValueError('synthetic native incomplete output')
-
-def stop_native(process):
-    try:
-        try:
-            process.stdin.close()
-        except OSError:
-            pass
-        try:
-            process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            pass
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        time.sleep(0.25)
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait(timeout=2)
-    finally:
-        for stream in (process.stdin, process.stdout, process.stderr):
-            try:
-                stream.close()
-            except OSError:
-                pass
-
-def run_reload(home, initial, replacement, near, adopted):
-    documents = (initial, replacement, near, adopted)
-    if (any(document['auth_mode'] != 'chatgpt' or document['tokens']['refresh_token'] != ''
-            or document['tokens']['account_id'] != initial['tokens']['account_id'] for document in documents)
-            or len({document['tokens']['access_token'] for document in documents}) != len(documents)):
-        raise ValueError('synthetic managed same-account values required')
-    bootstrap = runpy.run_path('/opt/agent-pm/lib/bootstrap.py')
-    def publish(document):
-        bootstrap['inject_codex'](io.BytesIO(json.dumps(document).encode()), directory=home)
-    exchange = ReloadExchange(
-        initial['tokens']['access_token'], replacement['tokens']['access_token'], lambda: publish(replacement),
-        proactive={'token': adopted['tokens']['access_token'], 'near': near['tokens']['access_token'],
-                   'publish_near': lambda: publish(near),
-                   'publish_final': lambda: publish(adopted)},
-    )
-    process = subprocess.Popen(
-        ['codex', '-c', 'cli_auth_credentials_store="file"', 'app-server', '--listen', 'stdio://'],
-        cwd=home,
-        env={'HOME': str(home), 'CODEX_HOME': str(home),
-             'PATH': '/opt/agent-pm/bin:/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8'},
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-    )
-    try:
-        process.stdin.write(exchange.start())
-        process.stdin.flush()
-        decoder = BoundedLines()
-        stderr_size = 0
-        deadline = time.monotonic() + 120
-        with selectors.DefaultSelector() as selector:
-            for stream, kind in ((process.stdout, 'stdout'), (process.stderr, 'stderr')):
-                os.set_blocking(stream.fileno(), False)
-                selector.register(stream, selectors.EVENT_READ, kind)
-            while not exchange.complete:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError('synthetic native timeout')
-                for key, _ in selector.select(timeout=min(0.2, remaining)):
-                    data = os.read(key.fileobj.fileno(), 65536)
-                    if not data:
-                        selector.unregister(key.fileobj)
-                        if key.data == 'stdout':
-                            decoder.finish()
-                            if not exchange.complete:
-                                raise ValueError('synthetic native closed before adoption')
-                        continue
-                    if key.data == 'stderr':
-                        stderr_size += len(data)
-                        if stderr_size > 1024 * 1024:
-                            raise ValueError('synthetic native stderr limit')
-                        continue
-                    for message in decoder.feed(data):
-                        for request in exchange.accept(message):
-                            process.stdin.write(request)
-                            process.stdin.flush()
-        return exchange.summary()
-    finally:
-        stop_native(process)
-
-if __name__ == '__main__':
-    try:
-        payload = json.loads(sys.stdin.buffer.read(65537))
-        result = run_reload(Path(os.environ['CODEX_HOME']), payload['initial'], payload['replacement'],
-                            payload['near'], payload['adopted'])
-        assert result['guarded_reload_completed'] is True
-        assert result['natural_auth_reload_completed'] is True
-    except (OSError, ValueError, KeyError, TypeError, TimeoutError, subprocess.SubprocessError):
-        sys.exit('synthetic native guarded reload failed')
-    print('Synthetic same-process guarded reload: PASS')
-"""
+PROBES = Path(__file__).with_suffix("")
 
 
 def synthetic_credentials(lifetime=540):
@@ -416,8 +57,24 @@ def synthetic_credentials(lifetime=540):
 def docker(*args, data=None):
     result = subprocess.run(["docker", *args], input=data, capture_output=True, timeout=120)
     if result.returncode:
+        print(result.stderr.decode(errors="replace")[-8000:], file=sys.stderr)
         raise RuntimeError(f"synthetic Codex check: docker {args[0]} failed")
     return result.stdout
+
+
+def probe(name, program, *args, user="agent"):
+    return docker(
+        "exec",
+        "-i",
+        "--user",
+        user,
+        name,
+        PYTHON,
+        "-I",
+        "-",
+        *args,
+        data=(PROBES / program).read_bytes(),
+    )
 
 
 def latest_runtime(directory, architecture):
@@ -462,6 +119,8 @@ def main(image):
         sessions.chmod(0o777)
         architecture = json.loads(docker("image", "inspect", image))[0]["Architecture"]
         latest, bundle = latest_runtime(temporary, architecture)
+        archive = Path(temporary, "runtime.tgz")
+        archive.write_bytes(bundle)
         for _ in range(2):
             name = "agent-pm-codex-ci-" + uuid.uuid4().hex
             try:
@@ -501,18 +160,8 @@ def main(image):
                     *inspected["HostConfig"]["Tmpfs"]
                 }
                 docker("exec", name, PYTHON, "-I", BOOTSTRAP, "codex", str(home), "/workspace")
-                docker(
-                    "exec",
-                    "-i",
-                    "--user",
-                    "root",
-                    name,
-                    PYTHON,
-                    "-I",
-                    "/opt/agent-pm/lib/codex-update.py",
-                    "stage",
-                    data=bundle,
-                )
+                docker("cp", str(archive), name + ":/tmp/codex-runtime.tgz")
+                probe(name, "stage.py", "/tmp/codex-runtime.tgz", user="root")
                 assert (
                     docker(
                         "exec", name, "/opt/agent-pm/runtime/codex.next/bin/codex", "--version"
@@ -546,10 +195,10 @@ def main(image):
                         actual,
                     )
                     assert (
-                        docker("exec", name, PYTHON, "-I", "-c", TOOL_PROBE).strip()
+                        probe(name, "tools.py").strip()
                         == b"Offline Codex code-mode command turn: PASS"
                     )
-                docker("exec", name, PYTHON, "-I", "-c", SKILLS_PROBE)
+                probe(name, "skills.py")
                 document, replacement = synthetic_credentials()
                 near, _ = synthetic_credentials(lifetime=120)
                 _, adopted = synthetic_credentials()
@@ -568,7 +217,7 @@ def main(image):
                 assert docker("exec", name, "codex", "--version").strip() == version
                 status = docker("exec", name, "codex", "login", "status")
                 assert access.encode() not in status
-                docker("exec", name, PYTHON, "-I", "-c", PROBE)
+                probe(name, "state.py")
                 payload = json.dumps(
                     {
                         "initial": json.loads(document),
@@ -577,7 +226,7 @@ def main(image):
                         "adopted": json.loads(adopted),
                     }
                 ).encode()
-                checked = docker("exec", "-i", name, PYTHON, "-I", "-c", RELOAD_PROBE, data=payload)
+                checked = probe(name, "reload.py", payload.decode())
                 assert checked.strip() == b"Synthetic same-process guarded reload: PASS"
             finally:
                 docker("rm", "--force", name)

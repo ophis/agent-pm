@@ -21,7 +21,7 @@ typeCheckingMode = "basic"
 reportUnnecessaryComparison = "error"
 reportUnnecessaryCast = "error"
 pythonVersion = "3.11"
-include = ["manager/src", "orchestrator/src", "delegate/src", "session/src", "utils/src"]
+include = ["manager/src", "orchestrator/src", "delegate/src", "session/src", "utils/src", ".github/worker_codex.py", ".github/worker_codex"]
 extraPaths = ["manager/src", "orchestrator/src", "delegate/src", "session/src", "utils/src"]
 
 [tool.vulture]

@@ -146,3 +146,11 @@ GRAPHQL = re.compile(r"\b(?:query|mutation)\s*(?:\w+\s*)?(?:\(\s*\$|\{)")
 
 # Linear concepts engine/flow/, the tracker-agnostic core, names none of
 FLOW_LINEAR = re.compile(rf"{GRAPHQL.pattern}|linear|graphql|project|email|state id|label id", re.I)
+
+
+EMBEDDED_PROGRAMS_ALLOWED = {
+    (
+        "orchestrator/tests/orchestrator_tests/integration/linear_bin_integration_test.py",
+        "c710e2832b40273e5a68ddb9026256785f0d2f47e44d3f285c6132d45114a427",
+    ): "Existing executable-selection fixture checks the system interpreter meets Python 3.11.",
+}

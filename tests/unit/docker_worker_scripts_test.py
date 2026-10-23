@@ -466,12 +466,7 @@ class CodexCIReload(Case):
         self.worker = runpy.run_path(str(Path(REPO, ".github/worker_codex.py")))
 
     def reload_code(self):
-        self.assertTrue(
-            "RELOAD_PROBE" in self.worker, "same-process synthetic reload check missing"
-        )
-        code = {"__name__": "fake_ci_probe"}
-        exec(self.worker["RELOAD_PROBE"], code)
-        return code
+        return runpy.run_path(str(self.worker["PROBES"] / "reload.py"), run_name="fake_ci_probe")
 
     @staticmethod
     def status(identifier, token):
@@ -635,7 +630,7 @@ class CodexCIReload(Case):
         self.assertTrue(exchange.summary()["natural_auth_reload_completed"])
 
     def test_ci_entrypoint_injects_managed_values_and_runs_reload_with_network_disabled(self):
-        calls, active = [], {}
+        calls, active, copied = [], {}, []
         version = b"codex-cli 0.163.0"
 
         def docker(*args, data=None):
@@ -682,14 +677,16 @@ class CodexCIReload(Case):
                 ).encode()
             elif args[-1] == "--version":
                 return version
-            elif args[-1] == self.worker["RELOAD_PROBE"]:
-                payload = json.loads(data)
+            elif args[0] == "cp":
+                copied.append(Path(args[1]).read_bytes())
+            elif data == (self.worker["PROBES"] / "reload.py").read_bytes():
+                payload = json.loads(args[-1])
                 self.assertEqual(set(payload), {"initial", "replacement", "near", "adopted"})
                 self.assertTrue(
                     all(document["auth_mode"] == "chatgpt" for document in payload.values())
                 )
                 return b"Synthetic same-process guarded reload: PASS\n"
-            elif args[-1] == self.worker["TOOL_PROBE"]:
+            elif data == (self.worker["PROBES"] / "tools.py").read_bytes():
                 return b"Offline Codex code-mode command turn: PASS\n"
             return b""
 
@@ -711,11 +708,18 @@ class CodexCIReload(Case):
         injected = [(args, data) for args, data in calls if "codex-auth" in args]
         self.assertEqual(len(injected), 2)
         self.assertTrue(all(args[-1].endswith("/codex") for args, _ in injected))
-        self.assertEqual(sum(args[-1] == self.worker["RELOAD_PROBE"] for args, _ in calls), 2)
-        self.assertEqual(sum(args[-1] == self.worker["TOOL_PROBE"] for args, _ in calls), 4)
-        self.assertEqual(
-            [data for args, data in calls if args[-1] == "stage"], [b"verified-bundle"] * 2
-        )
+        for program, count in (
+            ("reload.py", 2),
+            ("tools.py", 4),
+            ("skills.py", 2),
+            ("state.py", 2),
+            ("stage.py", 2),
+        ):
+            source = (self.worker["PROBES"] / program).read_bytes()
+            sent = [args for args, data in calls if data == source]
+            self.assertEqual(len(sent), count, program)
+            self.assertTrue(all("-i" in args and "-" in args and "-c" not in args for args in sent))
+        self.assertEqual(copied, [b"verified-bundle"] * 2)
 
     def test_reload_cleanup_still_kills_group_after_broken_input(self):
         code = self.reload_code()
