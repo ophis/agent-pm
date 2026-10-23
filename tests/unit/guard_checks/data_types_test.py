@@ -126,7 +126,7 @@ class SharedTypes(Sample):
     def test_standalone_definitions_and_consumers_keep_local_data_types(self):
         for path in STANDALONE:
             with self.subTest(path=path):
-                module = path.split("/src/")[1].removesuffix(".py").replace("/", ".")
+                module = path.split("/src/")[-1].lstrip(".").removesuffix(".py").replace("/", ".")
                 root = self.tree(
                     {
                         path: self.DATA,

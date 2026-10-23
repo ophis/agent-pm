@@ -88,10 +88,6 @@ EMBEDDED_PROGRAMS_ALLOWED = {
         "9eab95e939ba98ce47fe6013b159a0526b7a4d2e044077d2b53755ba304ec33f",
     ): "Existing callback recorder fixture delays a child to observe callback ordering.",
     (
-        "delegate/tests/fakes/usage.py",
-        "f4679a533131770a0d73388e96fb8e954fb5cf1bb2520271c87ba4f45cc0d916",
-    ): "Existing usage fake emits a deterministic quota response.",
-    (
         "delegate/tests/integration/bin_integration_test.py",
         "c710e2832b40273e5a68ddb9026256785f0d2f47e44d3f285c6132d45114a427",
     ): "Existing executable-selection fixture checks the system interpreter meets Python 3.11.",

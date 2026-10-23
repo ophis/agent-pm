@@ -32,6 +32,11 @@ class EmbeddedPrograms(Sample):
         )
         self.assertTrue(self.checked(source))
 
+    def test_inert_command_lists_in_assertions_and_data_calls_are_allowed(self):
+        for call in ("self.assertEqual(actual, ARGV)", "print(ARGV)", "record(ARGV)"):
+            with self.subTest(call=call):
+                self.assertEqual(self.checked("ARGV = ['python3', '-c', 'print(1)']\n" + call), [])
+
     def test_aliases_assigned_argv_concatenation_and_dedent(self):
         source = (
             "import sys as system\nfrom textwrap import dedent as clean\n"

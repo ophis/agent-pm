@@ -82,6 +82,7 @@ with tempfile.TemporaryDirectory(prefix="codex-tools-") as temporary:
                 "Read input.txt using the command tool.",
             ]
         )
+        (work / "home").mkdir()
         env = {
             "HOME": temporary,
             "CODEX_HOME": str(work / "home"),

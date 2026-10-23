@@ -269,6 +269,8 @@ class _Scan:
             self.scope(function, closure, supplied, (*active, id(function)))
 
     def command(self, sequence, line, executable):
+        if not executable:
+            return
         for index, (node, env) in enumerate(sequence):
             if not _interpreter(node, env):
                 continue

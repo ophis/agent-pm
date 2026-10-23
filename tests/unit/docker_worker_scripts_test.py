@@ -448,6 +448,41 @@ class CodexBootstrap(Case):
 
 
 class CodexCIGuard(Case):
+    def test_tool_probe_creates_private_home_before_starting_codex(self):
+        worker = runpy.run_path(str(Path(REPO, ".github/worker_codex.py")))
+        active = {}
+
+        def server(_endpoint, handler):
+            active["handler"] = handler
+            return mock.Mock(server_port=1234)
+
+        def run(_command, **kwargs):
+            self.assertTrue(Path(kwargs["env"]["CODEX_HOME"]).is_dir())
+            marker = (Path(kwargs["cwd"]) / "input.txt").read_text()
+            for body in (
+                {"input": []},
+                {"input": [{"type": "custom_tool_call_output", "output": marker}]},
+            ):
+                data = json.dumps(body).encode()
+                handler = SimpleNamespace(
+                    headers={"Content-Length": str(len(data))},
+                    rfile=io.BytesIO(data),
+                    wfile=io.BytesIO(),
+                    send_response=mock.Mock(),
+                    send_header=mock.Mock(),
+                    end_headers=mock.Mock(),
+                )
+                active["handler"].do_POST(handler)
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+        with (
+            mock.patch("http.server.HTTPServer", side_effect=server),
+            mock.patch("threading.Thread"),
+            mock.patch("subprocess.run", side_effect=run),
+            mock.patch("builtins.print"),
+        ):
+            runpy.run_path(str(worker["PROBES"] / "tools.py"))
+
     def test_ci_probe_refuses_local_execution_and_untrusted_image_without_docker(self):
         main = runpy.run_path(str(Path(REPO, ".github/worker_codex.py")))["main"]
         for ci, image in (("false", "agent-pm-worker:" + "a" * 64), ("true", "untrusted")):

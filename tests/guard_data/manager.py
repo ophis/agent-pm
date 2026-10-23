@@ -45,57 +45,13 @@ EMBEDDED_PROGRAMS_ALLOWED = {
         "d15b1ac2a7a7eba11971da7b0a2ea0d5a9df3f35c995d067920091c6868b64e5",
     ): "Existing crew CLI fixture races independent appenders against the shared locked log.",
     (
-        "manager/tests/integration/crew_engine_integration_test.py",
-        "a069c336671b7322d5ba5c1a32fb4b000386686552892449f7412dbd81ea3bd1",
-    ): "Existing process fixture checks start process observes starting entry unlocked events and caller path.",
-    (
-        "manager/tests/integration/crew_engine_integration_test.py",
-        "91ba7d2d48acc90701e1a3e50996455304f3f95a0ade3105cbc09e51eca5494d",
-    ): "Existing process fixture checks null or mismatched sid keep launch lost.",
-    (
-        "manager/tests/integration/crew_engine_integration_test.py",
-        "2864c9678ab0c6627d411ebde19a8754d19e9cbf64ad381ce9626f56160fbd0b",
-    ): "Existing process fixture checks final json without newline commits but truncated json stays lost.",
-    (
         "manager/tests/integration/holder_integration_test.py",
         "e20fe2f1e5d9adb32aa144fb0c2ddfc8ee7479809a740dda76d372631160e54d",
     ): "Existing process fixture checks child environment replaces inherited identity and preserves exit code.",
     (
         "manager/tests/integration/holder_integration_test.py",
-        "5a2583697fb9fdbc9d95661abd11ade09f3c96cf7b3160971f7817bb97eac04d",
-    ): "Existing process fixture checks wrapper holds lock until child exits.",
-    (
-        "manager/tests/integration/holder_integration_test.py",
-        "d74ff0ee8da3b9806b18c877dbf29bbde50b5bd8e4dad7a3a725000feb82e8f1",
-    ): "Existing process fixture checks forced wrapper takes over without killing old command.",
-    (
-        "manager/tests/integration/holder_integration_test.py",
-        "5b4b608b022cdf18f4acc381fbe749cba41a6631f1b77f3495239f5c7b317b0a",
-    ): "Existing process fixture checks interrupt and terminate reach child and wait before unlock.",
-    (
-        "manager/tests/integration/holder_integration_test.py",
         "b1ee562c7ce5b505e3c9868c3e68a6372c4ee8caadc2efc709af38bf831c15b7",
     ): "Existing holder fixture observes whether inherited terminal stop signals remain blocked.",
-    (
-        "manager/tests/integration/holder_integration_test.py",
-        "28b755cf6ae6dbe53bda7355e2f142e7348db94f5c4e134fba0d2016876c8032",
-    ): "Existing process fixture checks terminate reaches manager descendants in owned process group.",
-    (
-        "manager/tests/integration/holder_integration_test.py",
-        "dc14a5c542c5f4702a9c2884413578ca466d54502406bf21772fbe346c5a1de2",
-    ): "Existing process fixture checks terminate reaches manager descendants in owned process group.",
-    (
-        "manager/tests/integration/holder_integration_test.py",
-        "fa98c9a537d71c884c29d1ee96f72aad4fc54239fa28adc1c59c81c320672bea",
-    ): "Existing process fixture checks terminal foreground child gets one interrupt and foreground restores.",
-    (
-        "manager/tests/integration/holder_integration_test.py",
-        "6d26415b6d4a9e3f34a7d14aaca0f230f2b22632427950848f371cd3d97ca1d2",
-    ): "Existing process fixture checks terminal handoff failure terminates child and releases lease.",
-    (
-        "manager/tests/integration/rearm_integration_test.py",
-        "69510745526bed812cecef6a71a7153ec6d859e2628db22b90e84c8a062dfd25",
-    ): "Existing process fixture checks a sibling with the holds environment gets nothing.",
     (
         "manager/tests/integration/receipt_integration_test.py",
         "329edc866f0b4ea0add6fb69c156a272da4eeb5b5cd36aaa98656464f4d1a8dc",
