@@ -210,7 +210,7 @@ def listing(run, docs, dir_) -> list[str] | None:
 
 
 def _listed(run, docs, ident, dir_):
-    # names are date-prefixed: the last is the newest
+    # GitHub names are date-prefixed (last is newest); local ones are ordered by mtime below
     names = listing(run, docs, dir_) or []
     hits = sorted(n for n in names if fnmatch.fnmatchcase(n, f"*-{ident}-*.md"))
     if os.path.isabs(dir_):
