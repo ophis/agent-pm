@@ -77,50 +77,6 @@ under_home() {
   return 0
 }
 
-# Shared with install-cleanup.sh; prunes paths absent from the NUL-delimited baseline, without following symlinks.
-agent_tree_clean() {
-  python3 -I -c '
-import os, shutil, sys
-from pathlib import Path
-
-raw_root, raw_snapshot = sys.argv[1:]
-root, snapshot = Path(raw_root), Path(raw_snapshot)
-
-def children(directory):
-    with os.scandir(directory) as stream:
-        return sorted(stream, key=lambda item: item.name)
-
-def visit(directory, saved):
-    for entry in children(directory):
-        path = Path(entry.path)
-        relative = str(path.relative_to(root))
-        if directory == root and entry.name in ("install", "board"):
-            continue
-        if relative not in saved:
-            if entry.is_dir(follow_symlinks=False):
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-            continue
-        if entry.is_dir(follow_symlinks=False):
-            visit(path, saved)
-
-try:
-    raw = snapshot.read_bytes()
-    if not raw.endswith(b"\0"):
-        raise ValueError()
-    paths = [Path(os.fsdecode(item)) for item in raw[:-1].split(b"\0")]
-    if root not in paths:
-        raise ValueError()
-    saved = {str(path.relative_to(root)) for path in paths}
-    visit(root, saved)
-    if any(entry.name != "install" for entry in children(root)):
-        print("keep")
-except (OSError, ValueError, TypeError, RecursionError):
-    sys.exit("install: agent-pm path inventory failed; installer records retained for a rerun")
-' "$@"
-}
-
 # Exit 0 when the fields are a Ledger record the cleanup can act on.
 ledger_valid() {
   local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
@@ -779,16 +735,45 @@ files_and_dirs() {
 }
 
 agent_tree() {
-  local keep
+  local path key index=0 keep= root_key
+  local -a paths
   step "agent-pm runtime data"
+  umask 077
   if ! grep -qxF "agent-tree"$'\t'"$HOME/.agent-pm" "$ledger"; then return; fi
-  keep=$(agent_tree_clean "$HOME/.agent-pm" "$state_dir/agent-tree.paths") || die "cannot remove runtime data; its records stay for a rerun"
-  drop "agent-tree"$'\t'"$HOME/.agent-pm" || die "cannot update $ledger"
-  printf '%s' "$keep"
+  root_key=$(LC_ALL=C printf '%q' "$HOME/.agent-pm")
+  grep -qxF -- "$root_key" "$state_dir/agent-tree.paths" || die "invalid agent-pm path inventory; records retained"
+  (
+    umask 077
+    find -H "$HOME/.agent-pm" \( -path "$state_dir" -o -path "$HOME/.agent-pm/board" \) -prune -o -print0 >"$state_dir/agent-tree.current"
+  ) || die "cannot inventory runtime data; records retained"
+  : >"$state_dir/agent-tree.index" || die "cannot write runtime inventory; records retained"
+  while IFS= read -r -d '' path; do
+    paths[index]=$path
+    LC_ALL=C printf '%q\t%s\n' "$path" "$index" >>"$state_dir/agent-tree.index" || die "cannot write runtime inventory; records retained"
+    index=$((index + 1))
+  done <"$state_dir/agent-tree.current"
+  LC_ALL=C sort "$state_dir/agent-tree.index" >"$state_dir/agent-tree.sorted" || die "cannot sort runtime inventory; records retained"
+  LC_ALL=C join -t $'\t' -v 2 "$state_dir/agent-tree.paths" "$state_dir/agent-tree.sorted" >"$state_dir/agent-tree.added" || die "cannot compare runtime inventory; records retained"
+  while IFS=$'\t' read -r key index; do
+    path=${paths[$index]}
+    [ -e "$path" ] || [ -L "$path" ] || continue
+    rm -rf -- "$path" || die "cannot remove runtime data; its records stay for a rerun"
+  done <"$state_dir/agent-tree.added"
+  (
+    shopt -s dotglob nullglob
+    for path in "$HOME/.agent-pm/"*; do
+      case $path in
+        "$state_dir") ;;
+        "$HOME/.agent-pm/board") keep=${keep:-board} ;;
+        *) keep=original; break ;;
+      esac
+    done
+    printf '%s' "$keep"
+  )
 }
 
 main() {
-  local platform agent_root= keep_root=
+  local platform agent_root= keep_root= path
   set +x
   parse_args "$@"
   platform=$(uname -sm)
@@ -822,11 +807,20 @@ main() {
   homebrew_and_clt
   files_and_dirs
   step "~/.agent-pm"
-  if grep -vx "dir"$'\t'"$HOME/.agent-pm" "$ledger" | grep -q .; then
+  if grep -vxF -e "dir"$'\t'"$HOME/.agent-pm" -e "agent-tree"$'\t'"$HOME/.agent-pm" "$ledger" | grep -q .; then
     die "records no step removed are left in $ledger"
   fi
   if [ -n "$agent_root" ]; then
-    if [ -n "$keep_root" ] || [ -e "$HOME/.agent-pm/board" ] || [ -L "$HOME/.agent-pm/board" ]; then
+    if [ "$keep_root" = original ]; then
+      (
+        shopt -s dotglob nullglob
+        for path in "$state_dir/"*; do
+          case $path in "$ledger" | "$state_dir/agent-tree.paths") continue ;; esac
+          rm -rf -- "$path"
+        done
+      )
+      say "    kept preexisting files; path inventory and directory record retained"
+    elif [ -n "$keep_root" ] || [ -e "$HOME/.agent-pm/board" ] || [ -L "$HOME/.agent-pm/board" ]; then
       rm -rf "$state_dir"
       mkdir -p "$state_dir"
       printf 'dir\t%s\n' "$HOME/.agent-pm" >"$ledger"

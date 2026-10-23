@@ -241,48 +241,19 @@ under_home() {
   return 0
 }
 
-# Shared with install-cleanup.sh; prunes paths absent from the NUL-delimited baseline, without following symlinks.
-agent_tree_clean() {
-  python3 -I -c '
-import os, shutil, sys
-from pathlib import Path
-
-raw_root, raw_snapshot = sys.argv[1:]
-root, snapshot = Path(raw_root), Path(raw_snapshot)
-
-def children(directory):
-    with os.scandir(directory) as stream:
-        return sorted(stream, key=lambda item: item.name)
-
-def visit(directory, saved):
-    for entry in children(directory):
-        path = Path(entry.path)
-        relative = str(path.relative_to(root))
-        if directory == root and entry.name in ("install", "board"):
-            continue
-        if relative not in saved:
-            if entry.is_dir(follow_symlinks=False):
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-            continue
-        if entry.is_dir(follow_symlinks=False):
-            visit(path, saved)
-
-try:
-    raw = snapshot.read_bytes()
-    if not raw.endswith(b"\0"):
-        raise ValueError()
-    paths = [Path(os.fsdecode(item)) for item in raw[:-1].split(b"\0")]
-    if root not in paths:
-        raise ValueError()
-    saved = {str(path.relative_to(root)) for path in paths}
-    visit(root, saved)
-    if any(entry.name != "install" for entry in children(root)):
-        print("keep")
-except (OSError, ValueError, TypeError, RecursionError):
-    sys.exit("install: agent-pm path inventory failed; installer records retained for a rerun")
-' "$@"
+# Inventory paths before dependencies exist; %q keeps each name on one line without evaluating it.
+agent_tree_snapshot() {
+  local path
+  (
+    umask 077
+    find -H "$HOME/.agent-pm" \( -path "$state_dir" -o -path "$HOME/.agent-pm/board" \) -prune -o -print0 >"$state_dir/agent-tree.raw"
+    while IFS= read -r -d '' path; do
+      LC_ALL=C printf '%q\n' "$path"
+    done <"$state_dir/agent-tree.raw" >"$state_dir/agent-tree.unsorted"
+    LC_ALL=C sort "$state_dir/agent-tree.unsorted" >"$state_dir/agent-tree.paths.tmp"
+  )
+  mv "$state_dir/agent-tree.paths.tmp" "$state_dir/agent-tree.paths"
+  rm -f "$state_dir/agent-tree.raw" "$state_dir/agent-tree.unsorted"
 }
 
 # Exit 0 when the fields are a Ledger record the cleanup can act on.
@@ -2321,14 +2292,9 @@ main() {
   exec 3<>"$(terminal)"
   trap on_exit EXIT
   [ -d "$HOME/.agent-pm" ] || ledger_add dir "$HOME/.agent-pm"
-  if ! recorded agent-tree "$HOME/.agent-pm"; then
-    mkdir -p "$state_dir"
-    (
-      umask 077
-      find -H "$HOME/.agent-pm" \( -path "$state_dir" -o -path "$HOME/.agent-pm/board" \) -prune -o -print0 >"$state_dir/agent-tree.paths.tmp"
-    )
-    mv "$state_dir/agent-tree.paths.tmp" "$state_dir/agent-tree.paths"
+  if ! recorded agent-tree "$HOME/.agent-pm" || [ ! -f "$state_dir/agent-tree.paths" ]; then
     ledger_add agent-tree "$HOME/.agent-pm"
+    agent_tree_snapshot
   fi
   # Record tool state before Homebrew, logins or launcher installation can create it.
   record_dir "$HOME/.homebrew"

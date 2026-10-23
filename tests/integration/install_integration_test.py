@@ -35,6 +35,7 @@ REAL = (
     "chmod",
     "sleep",
     "sort",
+    "join",
     "find",
     "cut",
     "dirname",
@@ -1755,9 +1756,13 @@ class InstallTest(Case):
         original = Path(self.agent_pm, "work/user-project/result.txt")
         original.parent.mkdir(parents=True)
         original.write_text("user work")
+        special = original.parent / "user [*]\tline\n.txt"
+        special.write_text("user special")
         self.assert_ok(self.opencode_only())
         new = original.parent / "runtime-result.txt"
         new.write_text("runtime data")
+        special_new = original.parent / "runtime [*]\tline\n.tmp"
+        special_new.write_text("runtime data")
         other = Path(self.agent_pm, "work/X/result.txt")
         other.parent.mkdir()
         other.write_text("runtime data")
@@ -1768,6 +1773,8 @@ class InstallTest(Case):
         self.assert_ok(self.cleanup("--yes"))
         self.assertEqual(user.read_text(), "keep")
         self.assertEqual(original.read_text(), "user work")
+        self.assertEqual(special.read_text(), "user special")
+        self.assertFalse(special_new.exists())
         self.assertFalse(new.exists())
         self.assertFalse(other.parent.exists())
         self.assertFalse(self.ledger())
@@ -1832,6 +1839,56 @@ exec /bin/rm "$@"
         self.assert_ok(self.cleanup("--yes"))
         self.assertFalse(Path(self.agent_pm).exists())
         self.assertFalse((self.root / "opt/homebrew/bin/python3").exists())
+
+    def user_file_after_kept_board(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(self.opencode_only())
+        board = Path(self.agent_pm, "board")
+        board.mkdir()
+        (board / "keep.md").write_text("board data")
+        self.assert_ok(self.cleanup("--yes"))
+        shutil.rmtree(board)
+        original = Path(self.agent_pm, "keep.txt")
+        original.write_text("preexisting user data")
+        self.assert_ok(self.opencode_only())
+        return original
+
+    def test_cleanup_retries_preserve_user_file_after_kept_board(self):
+        original = self.user_file_after_kept_board()
+        (self.fakes / "fail").write_text("brew uninstall node")
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn(f"agent-tree\t{self.agent_pm}", self.ledger())
+        self.assertEqual(original.read_text(), "preexisting user data")
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(original.read_text(), "preexisting user data")
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(original.read_text(), "preexisting user data")
+        original.unlink()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_cleanup_repeated_success_preserves_user_file_after_kept_board(self):
+        original = self.user_file_after_kept_board()
+        for _ in range(2):
+            self.assert_ok(self.cleanup("--yes"))
+            self.assertEqual(original.read_text(), "preexisting user data")
+        original.unlink()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
+    def test_cleanup_after_bootstrap_failure_without_python(self):
+        shutil.rmtree(self.agent_pm)
+        (self.bin / "python3").unlink()
+        (self.fakes / "fail").write_text(
+            "curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
+        )
+        result = self.run_install(
+            "--clients", "claude", "--no-docker", answers=[(SUDO_Q, PASSWORD)]
+        )
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
 
     def tool_artifacts(self):
         return [
