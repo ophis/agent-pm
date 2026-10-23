@@ -49,6 +49,17 @@ class CheckedDelegate(FakeDelegate):
 
 
 class Runs(RunCase):
+    def test_local_document_out_is_stable_and_separate_from_issue_workdir(self):
+        local_dir = self.cfg.work_dir + "/docs/researcher"
+        cfg = replace(self.cfg, docs=replace(self.cfg.docs, dirs={"researcher": local_dir}))
+        self.cfg = cfg
+        owner, _ = self.start(delegate_cls=CapturedDelegate)
+        out = owner.delegate.accepted[1].out
+        self.assertEqual(out, f"{local_dir}/document-TASK-1-{SID}.md")
+        with mock.patch.object(owner.delegate, "resume"):
+            owner.resume(input="revision")
+        self.assertEqual(owner.delegate.accepted[1].out, out)
+
     def test_enterprise_build_host_fallback_reaches_delegate_overlay(self):
         cfg = replace(self.cfg, docs=replace(self.cfg.docs, host="ghe.example.com"))
         owner = LinearRun(

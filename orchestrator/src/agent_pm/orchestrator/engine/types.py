@@ -31,6 +31,14 @@ class Docs:
     dirs: Mapping[str, str]
     host: str = "github.com"
 
+    def local_out(self, role: str, ident: str, sid: str) -> str | None:
+        directory = self.dirs.get(role, "")
+        return (
+            os.path.join(directory, f"document-{ident}-{sid}.md")
+            if os.path.isabs(directory)
+            else None
+        )
+
 
 class TrackerKind(StrEnum):
     """[orchestrator] tracker: where the board's issues live."""

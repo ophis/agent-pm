@@ -24,9 +24,11 @@ def _one(value, host):
     m = re.fullmatch(r"\[[^\]]*\]\(<?([^)>]+)>?\)", v)
     if m:
         v = m.group(1).strip()
-    if v.startswith(f"git@{host}:") and not v.endswith("/"):
-        v = f"https://{host}/" + v.removeprefix(f"git@{host}:")
-    if not v.startswith(f"https://{host}/"):
+    ssh = f"git@{host}:"
+    if v[: len(ssh)].lower() == ssh.lower() and not v.endswith("/"):
+        v = f"https://{host}/" + v[len(ssh) :]
+    prefix = f"https://{host}/"
+    if v[: len(prefix)].lower() != prefix.lower():
         return repo_slug(v)
     try:
         repo = Repo.parse(v)

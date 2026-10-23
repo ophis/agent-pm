@@ -1800,7 +1800,7 @@ class ConfigurationRoot(ConfigFile, Case):
                 self.core(CORE_TOML.replace(DESIGN, design))
                 self.fails(message, PIPELINE)
         self.core(CORE_TOML)
-        self.fails(message, HEADER + ENGINEER_ONLY + role("engineer"))
+        self.assertEqual(self.load(HEADER + ENGINEER_ONLY + role("engineer")).docs.dirs, {})
 
     def test_enterprise_document_and_build_hosts(self):
         self.core(
@@ -1815,6 +1815,32 @@ class ConfigurationRoot(ConfigFile, Case):
         )
         self.assertEqual(cfg.repo_host("engineer"), "build.example.com")
 
+    def test_local_document_roles_and_mixed_destinations(self):
+        for kind in ("local", "orchestrator"):
+            with self.subTest(kind=kind):
+                self.core(CORE_TOML.replace('type = "github"', f'type = "{kind}"'))
+                cfg = self.load(PIPELINE)
+                self.assertEqual((cfg.docs.repo, cfg.docs.branch), ("", ""))
+                self.assertEqual(cfg.docs.dirs["pm"], os.path.join(cfg.work_dir, "docs", "pm"))
+                self.assertEqual(
+                    cfg.docs.local_out("pm", "TASK-1", SID),
+                    os.path.join(cfg.docs.dirs["pm"], f"document-TASK-1-{SID}.md"),
+                )
+                self.assertEqual(cfg.repo_host("engineer"), "github.com")
+        self.core(CORE_TOML.replace(DESIGN, 'output = { type = "local" }'))
+        cfg = self.load(PIPELINE)
+        self.assertEqual(cfg.docs.dirs["researcher"], "Research/")
+        self.assertTrue(os.path.isabs(cfg.docs.dirs["pm"]))
+        self.assertIsNone(cfg.docs.local_out("researcher", "TASK-1", SID))
+
+    def test_document_destination_must_be_supported(self):
+        self.core(CORE_TOML.replace(DESIGN, 'output = { type = "pull-request" }'))
+        with self.assertRaisesRegex(config.ConfigError, "pm.*pull-request"):
+            self.load(PIPELINE)
+        self.core(CORE_TOML.replace('dir = "Designs/"', 'dir = "/documents"'))
+        with self.assertRaisesRegex(config.ConfigError, "github dir must be relative"):
+            self.load(PIPELINE)
+
     def test_enterprise_clone_keys_are_host_specific(self):
         clone = os.path.join(self.home, "enterprise-clone")
         os.makedirs(os.path.join(clone, ".git"))
@@ -1824,6 +1850,19 @@ class ConfigurationRoot(ConfigFile, Case):
             self.assertEqual(cfg.local_clones["ghe.example.com/acme/app"], clone)
             self.assertIsNone(config.clone_error(clone, "acme/app", host="ghe.example.com"))
             self.assertIn("not github.com/acme/app", config.clone_error(clone, "acme/app"))
+
+    def test_invalid_host_and_duplicate_qualified_clone_fail(self):
+        for host in ("https://ghe.example.com", "bad host", "ghe.example.com/path"):
+            with self.subTest(host=host):
+                self.core(CORE_TOML.replace(DESIGN, DESIGN.replace(" }", f', host = "{host}" }}')))
+                with self.assertRaisesRegex(config.ConfigError, "invalid host"):
+                    self.load(PIPELINE)
+        self.core(CORE_TOML)
+        with self.assertRaisesRegex(config.ConfigError, "same repo"):
+            self.load(
+                PIPELINE
+                + '[local_clones]\n"acme/app" = "/clone"\n"github.com/acme/app" = "/clone2"\n'
+            )
 
 
 # A local table that stays empty is dropped (utils/src/agent_pm/utils/config_file.py), so a role

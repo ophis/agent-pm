@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -952,6 +953,35 @@ class OutcomeFiles(Base):
 
 
 class EngineeringUrls(Base):
+    def test_local_completion_posts_reference_without_external_attachment(self):
+        gql = Gql()
+        ctx = self.ctx("researcher", gql=gql)
+        path = self.write(ctx, "documents/result.md", "Report")
+        ctx = replace(ctx, document=path)
+        self.assertTrue(
+            writeback.finish(ctx, Outcome(status="done", title="Report", summary="Ready."))
+        )
+        self.assertEqual(
+            gql.calls, expect(body=f"Ready.\n\n{Path(path).as_uri()}", state="in_review")
+        )
+
+    def test_incomplete_local_outcomes_do_not_publish_output_reference(self):
+        ctx = replace(self.ctx("researcher"), document="/docs/not-complete.md")
+        for status in ("failed", "needs_input"):
+            with self.subTest(status=status):
+                body, _, url = writeback._completion_body(
+                    ctx,
+                    Outcome(
+                        status=status,
+                        title="Incomplete",
+                        summary="Stopped.",
+                        questions=["Which?"],
+                        url="/docs/not-complete.md",
+                    ),
+                )
+                self.assertNotIn("not-complete.md", body)
+                self.assertEqual(url, "")
+
     def test_enterprise_completion_accepts_only_target_host(self):
         ctx = replace(self.ctx(), host="ghe.example.com")
         url = PR.replace("github.com", "ghe.example.com")

@@ -67,6 +67,7 @@ class LinearRun:
                 resume=resume,
                 name=config.tui_name(role, issue, sid),
                 events=events,
+                out=cfg.docs.local_out(role, issue, sid),
             ),
             display=display,
             callback=["agent-pm-orchestrator", "writeback", "--issue", issue, "--workdir", workdir],

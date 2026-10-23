@@ -763,7 +763,11 @@ def _outer(a, cfg, *, gql, run, keychain, wiring, now, attended):
             log("router", "bounce", a.issue, reason=repo.reason)
             return 0
     else:
-        repo = target.research_repo(issue, accounts.repos, host=cfg.docs.host)
+        host = next(
+            (cfg.repo_host(name) for name in cfg.roles if config.TASKS[name].input == "build"),
+            cfg.docs.host,
+        )
+        repo = target.research_repo(issue, accounts.repos, host=host)
     slug = f"{repo.owner}/{repo.name}" if build and repo else None
     if repo is not None:
         repo = target.with_clone(
