@@ -1,6 +1,6 @@
 {
   "name": "agent-pm",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Guidelines for your commander session (/agent-pm:manage), and agent-pm's core roles and tasks, researcher, pm and engineer, run in this conversation (/agent-pm:act-as), and fixed board issue commands (/agent-pm:board).",
   "author": "Yinze Wang",
   "license": "MIT",
