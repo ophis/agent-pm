@@ -1681,6 +1681,33 @@ class InstallTest(Case):
                 for name, contents in originals.items():
                     self.assertEqual((path.parent / name).read_bytes(), contents, name)
 
+    def runtime_files(self):
+        paths = [
+            Path(self.agent_pm, relative)
+            for relative in (
+                "logs/runs.jsonl",
+                "work/X/result.txt",
+                "adhoc/X/result.txt",
+                "managers/X/state.json",
+                "docker-state/X/state.json",
+                "workers/X/state.json",
+                "tmp/X/state.json",
+                "unrecorded/cache",
+                ".runtime/cache",
+            )
+        ]
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("runtime data")
+        return paths
+
+    def test_cleanup_removes_runtime_data_and_created_root(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(self.opencode_only())
+        self.runtime_files()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm).exists())
+
     def test_cleanup_keeps_root_ownership_across_board_and_install_cycles(self):
         shutil.rmtree(self.agent_pm)
         self.assert_ok(
@@ -1699,31 +1726,46 @@ class InstallTest(Case):
         board = Path(self.agent_pm, "board")
         issue = board / "unassigned/keep.md"
         issue.write_text("keep")
+        runtime = self.runtime_files()
         self.assert_ok(self.cleanup("--yes"))
         self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
         self.assertEqual(issue.read_text(), "keep")
+        for path in runtime:
+            self.assertFalse(path.exists(), str(path))
+        self.assertEqual(
+            {path.name for path in Path(self.agent_pm).iterdir()}, {"board", "install"}
+        )
         self.assert_ok(self.opencode_only())
         (self.fakes / "commit").write_text(NEW)
         self.assert_ok(self.opencode_rerun())
+        runtime = self.runtime_files()
         self.assert_ok(self.cleanup("--yes"))
         self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
         self.assertEqual(issue.read_text(), "keep")
+        for path in runtime:
+            self.assertFalse(path.exists(), str(path))
         self.assertFalse(Path(self.home, ".config/opencode").exists())
         shutil.rmtree(board)
         self.assert_ok(self.cleanup("--yes"))
         self.assertFalse(Path(self.agent_pm).exists())
 
-    def test_cleanup_preserves_user_file_added_under_created_root(self):
-        shutil.rmtree(self.agent_pm)
-        self.assert_ok(self.opencode_only())
+    def test_cleanup_preserves_preexisting_user_files_and_runtime_directories(self):
         user = Path(self.agent_pm, "keep.txt")
         user.write_text("keep")
+        original = Path(self.agent_pm, "work/user-project/result.txt")
+        original.parent.mkdir(parents=True)
+        original.write_text("user work")
+        self.assert_ok(self.opencode_only())
+        for name in ("logs", "adhoc", "managers", "docker-state", "workers", "tmp"):
+            path = Path(self.agent_pm, name, "runtime-data")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("runtime data")
         self.assert_ok(self.cleanup("--yes"))
         self.assertEqual(user.read_text(), "keep")
-        self.assertEqual(self.ledger(), [f"dir\t{self.agent_pm}"])
-        user.unlink()
-        self.assert_ok(self.cleanup("--yes"))
-        self.assertFalse(Path(self.agent_pm).exists())
+        self.assertEqual(original.read_text(), "user work")
+        self.assertFalse(self.ledger())
+        for name in ("logs", "adhoc", "managers", "docker-state", "workers", "tmp"):
+            self.assertFalse(Path(self.agent_pm, name).exists(), name)
 
     def tool_artifacts(self):
         return [
@@ -3103,6 +3145,18 @@ class InstallTest(Case):
             self.ledger(),
             [
                 f"dir\t{h}/.agent-pm",
+                *(
+                    f"dir\t{h}/.agent-pm/{name}"
+                    for name in (
+                        "logs",
+                        "work",
+                        "adhoc",
+                        "managers",
+                        "docker-state",
+                        "workers",
+                        "tmp",
+                    )
+                ),
                 f"dir\t{h}/.homebrew",
                 f"file\t{h}/.homebrew/trust.json",
                 f"dir\t{h}/.cache/gh",

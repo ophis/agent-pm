@@ -734,7 +734,7 @@ files_and_dirs() {
 }
 
 main() {
-  local platform agent_root=
+  local platform agent_root= path
   set +x
   parse_args "$@"
   platform=$(uname -sm)
@@ -770,13 +770,24 @@ main() {
   if grep -vx "dir"$'\t'"$HOME/.agent-pm" "$ledger" | grep -q .; then
     die "records no step removed are left in $ledger"
   fi
+  if [ -n "$agent_root" ] && { [ -e "$HOME/.agent-pm/board" ] || [ -L "$HOME/.agent-pm/board" ]; }; then
+    # The root did not exist before install; only the kept board and cleanup record survive.
+    (
+      shopt -s dotglob nullglob
+      for path in "$HOME/.agent-pm/"*; do
+        case $path in "$HOME/.agent-pm/board" | "$state_dir") continue ;; esac
+        rm -rf -- "$path"
+      done
+    )
+  fi
   rm -rf "$state_dir"
   if [ -n "$agent_root" ]; then
-    # A board or files added by the user keep the root, and its ownership survives the next install.
-    if ! rmdir "$HOME/.agent-pm" 2>/dev/null; then
+    if [ -e "$HOME/.agent-pm/board" ] || [ -L "$HOME/.agent-pm/board" ]; then
       mkdir -p "$state_dir"
       printf 'dir\t%s\n' "$HOME/.agent-pm" >"$ledger"
-      say "    kept $HOME/.agent-pm: not empty; directory record retained"
+      say "    kept $HOME/.agent-pm/board; directory record retained"
+    else
+      rm -rf "$HOME/.agent-pm"
     fi
   fi
   current=

@@ -2266,7 +2266,7 @@ EOF
 }
 
 main() {
-  local platform answered=
+  local platform answered= path
   set +x
   parse_args "$@"
   early_checks
@@ -2276,6 +2276,9 @@ main() {
   exec 3<>"$(terminal)"
   trap on_exit EXIT
   [ -d "$HOME/.agent-pm" ] || ledger_add dir "$HOME/.agent-pm"
+  for path in logs work adhoc managers docker-state workers tmp; do
+    record_dir "$HOME/.agent-pm/$path"
+  done
   # Record tool state before Homebrew, logins or launcher installation can create it.
   record_dir "$HOME/.homebrew"
   record_file "$HOME/.homebrew/trust.json"
