@@ -801,7 +801,7 @@ main() {
   trap on_exit EXIT
   sudo_once
   if [ -x "$root/opt/homebrew/bin/brew" ]; then eval "$("$root/opt/homebrew/bin/brew" shellenv)"; fi
-  if grep -qx "dir"$'\t'"$HOME/.agent-pm" "$ledger"; then agent_root=1; fi
+  if grep -qxF "dir"$'\t'"$HOME/.agent-pm" "$ledger"; then agent_root=1; fi
   launchd_jobs
   board_dirs
   keychain_items
