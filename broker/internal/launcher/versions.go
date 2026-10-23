@@ -72,7 +72,8 @@ func (h Host) codexProbe(ctx context.Context, c, path, version string) error {
 	if strings.TrimSpace(string(out)) != "codex-cli "+version {
 		return errors.New("Codex version mismatch")
 	}
-	return nil
+	_, err = h.Docker.Run(ctx, asAgent(c, Python, "-I", updateScript, "probe", path, version), nil)
+	return err
 }
 
 func (h Host) updateCodex(ctx context.Context, c, arch string, clients Clients, i codex.Installation) (Clients, ClientUpdate, error) {
@@ -100,7 +101,7 @@ func (h Host) updateCodex(ctx context.Context, c, arch string, clients Clients, 
 		if downloadErr == nil {
 			err = h.updateCommand(updateCtx, c, "stage", native)
 			if err == nil {
-				err = h.codexProbe(updateCtx, c, runtimeDir+"/codex.next", target)
+				err = h.codexProbe(updateCtx, c, runtimeDir+"/codex.next/bin/codex", target)
 			}
 			if err == nil {
 				err = h.updateCommand(updateCtx, c, "publish", nil)

@@ -1,8 +1,11 @@
 package codex
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -125,6 +128,12 @@ func TestPlatformArtifacts(t *testing.T) {
 					}
 				} else {
 					got, err = r.Linux(context.Background(), "0.163.0", target.arch)
+					if err == nil {
+						if !bytes.Equal(got, data["https://registry.npmjs.org/native.tgz"]) {
+							t.Fatal("Linux runtime lost bundled files")
+						}
+						got, err = readEntryBounded(got, "package/vendor/"+target.triple+"/bin/codex", maxExpanded)
+					}
 				}
 				if mode == "direct" || mode == "alias" {
 					if err != nil || !bytes.Equal(got, []byte("xxxxxx")) {
@@ -143,5 +152,40 @@ func TestLinuxTargetGuards(t *testing.T) {
 		if _, err := New().Linux(context.Background(), c[0], c[1]); err == nil {
 			t.Fatal("invalid target accepted")
 		}
+	}
+}
+
+func TestLinuxRequiresCompanionFromSameVerifiedPackage(t *testing.T) {
+	for _, mode := range []string{"missing", "empty", "not_executable", "symlink"} {
+		t.Run(mode, func(t *testing.T) {
+			r, data := platformFixture(t, "linux", "x64", "x86_64-unknown-linux-musl", true)
+			prefix := "package/vendor/x86_64-unknown-linux-musl/bin/"
+			entries := []*tar.Header{{Name: prefix + "codex", Typeflag: tar.TypeReg, Mode: 0755, Size: 6}}
+			host := &tar.Header{Name: prefix + "codex-code-mode-host", Typeflag: tar.TypeReg, Mode: 0755, Size: 4}
+			switch mode {
+			case "empty":
+				host.Size = 0
+			case "not_executable":
+				host.Mode = 0644
+			case "symlink":
+				host.Typeflag, host.Size, host.Linkname = tar.TypeSymlink, 0, "codex"
+			}
+			if mode != "missing" {
+				entries = append(entries, host)
+			}
+			body := archive(t, entries...)
+			data["https://registry.npmjs.org/native.tgz"] = body
+			key := "https://registry.npmjs.org/@openai%2Fcodex/0.163.0-linux-x64"
+			var metadata map[string]any
+			if err := json.Unmarshal(data[key], &metadata); err != nil {
+				t.Fatal(err)
+			}
+			sum := sha512.Sum512(body)
+			metadata["dist"].(map[string]any)["integrity"] = "sha512-" + base64.StdEncoding.EncodeToString(sum[:])
+			data[key], _ = json.Marshal(metadata)
+			if _, err := r.Linux(context.Background(), "0.163.0", "amd64"); err == nil {
+				t.Fatal("incomplete runtime accepted")
+			}
+		})
 	}
 }

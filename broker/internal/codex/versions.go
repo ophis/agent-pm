@@ -55,5 +55,14 @@ func (r Runtime) Linux(ctx context.Context, version, arch string) ([]byte, error
 	if !ValidVersion(version) {
 		return nil, errors.New("Codex requires an exact stable version")
 	}
-	return r.platformEntry(ctx, version, "linux", cpu, triple)
+	b, err := r.platformArchive(ctx, version, "linux", cpu)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range []string{"codex", "codex-code-mode-host"} {
+		if _, err := readEntryBounded(b, "package/vendor/"+triple+"/bin/"+name, maxExpanded); err != nil {
+			return nil, err
+		}
+	}
+	return b, nil
 }

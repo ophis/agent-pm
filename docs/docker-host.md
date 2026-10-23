@@ -303,7 +303,7 @@ Install or upgrade the broker first ([Install](#install)). `<version>` is an exa
 | Browser login, as yourself | `/usr/local/libexec/agent-pm/agent-pm-broker login codex` |
 | Inspect | `/usr/local/libexec/agent-pm/agent-pm-broker status` |
 
-Each start, restart or resume selects the latest supported stable container Codex. If lookup or installation fails, it restores and verifies the image version; a below-minimum host or image is refused before credentials are injected. The host installation is upgraded only by your explicit command. Older installations: [Upgrading](upgrading.md#upgrading-steps).
+Each start, restart or resume selects the latest supported stable container Codex. The broker stages the integrity-checked platform package's complete vendor tree, including `codex-code-mode-host`, in the executable runtime tmpfs and publishes it with one directory rename. Before injecting credentials it verifies the version and starts the companion with `--help`; the image build checks its npm installation the same way. Lookup, incomplete packages, installation or probe failures restore and verify the image version. A below-minimum host or image is refused. The host installation is upgraded only by your explicit command. Older installations: [Upgrading](upgrading.md#upgrading-steps).
 
 ### Claude accounts
 

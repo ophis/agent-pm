@@ -127,7 +127,7 @@ func TestCodexVersionLifecycle(t *testing.T) {
 					w.versions = []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.164.0", "codex-cli 0.163.0", "codex-cli 0.163.0"}
 				}
 				w.execErr = func(args []string) error {
-					if slices.Contains(args, strings.TrimSuffix(mode, "_failed")) || (mode == "reset_failed" && slices.Contains(args, "stage")) || (mode == "restore_failed" && slices.Contains(args, "stage")) {
+					if (mode != "probe_failed" && slices.Contains(args, strings.TrimSuffix(mode, "_failed"))) || (mode == "reset_failed" && slices.Contains(args, "stage")) || (mode == "restore_failed" && slices.Contains(args, "stage")) {
 						return errors.New("failed")
 					}
 					if mode == "restore_failed" && slices.Contains(args, "--version") && slices.Contains(args, "/opt/agent-pm/bin/codex") {
@@ -163,10 +163,10 @@ func TestCodexVersionLifecycle(t *testing.T) {
 			index := func(arg string) int {
 				return slices.IndexFunc(d.calls, func(call []string) bool { return slices.Contains(call, arg) })
 			}
-			stage, stagedProbe, publish, reset, firstPublic, inject := index("stage"), index(runtimeDir+"/codex.next"), index("publish"), index("reset"), index("/opt/agent-pm/bin/codex"), index("inject-codex")
+			stage, stagedProbe, publish, reset, firstPublic, inject := index("stage"), index(runtimeDir+"/codex.next/bin/codex"), index("publish"), index("reset"), index("/opt/agent-pm/bin/codex"), index("inject-codex")
 			lastPublic, publicCount := -1, 0
 			for n, call := range d.calls {
-				if slices.Contains(call, "/opt/agent-pm/bin/codex") {
+				if slices.Contains(call, "/opt/agent-pm/bin/codex") && slices.Contains(call, "--version") {
 					lastPublic = n
 					publicCount++
 				}
@@ -215,6 +215,44 @@ func TestCodexVersionLifecycle(t *testing.T) {
 			}
 			if !strings.Contains(strings.Join(run, " "), "/opt/agent-pm/runtime:rw,exec,nosuid,nodev,") {
 				t.Fatal("missing volatile executable mount")
+			}
+		})
+	}
+}
+
+func TestCompanionProbeFailureFallsBackBeforeSecrets(t *testing.T) {
+	for _, path := range []string{runtimeDir + "/codex.next/bin/codex", "/opt/agent-pm/bin/codex"} {
+		t.Run(path, func(t *testing.T) {
+			failed := false
+			w := &world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.164.0", "codex-cli 0.164.0", "codex-cli 0.163.0"}}
+			if strings.Contains(path, "codex.next") {
+				w.versions = []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.164.0", "codex-cli 0.163.0"}
+			}
+			w.execErr = func(args []string) error {
+				if !failed && slices.Contains(args, "probe") && slices.Contains(args, path) {
+					failed = true
+					return errors.New("companion cannot start")
+				}
+				return nil
+			}
+			h, d := startHost(w, &fakeCreds{})
+			h.Versions = &fakeVersions{target: "0.164.0"}
+			h.Codex = &fakeCodexCreds{}
+			got, err := h.Start(context.Background(), codexManifest(t))
+			if err != nil || !failed || got.ClientUpdate.Result != "update_failed" || got.Clients.Codex != "codex-cli 0.163.0" {
+				t.Fatalf("fallback failed: %+v %v", got, err)
+			}
+			reset, restored := false, false
+			for _, call := range d.calls {
+				if slices.Contains(call, "reset") {
+					reset = true
+				}
+				if reset && slices.Contains(call, "probe") && slices.Contains(call, "0.163.0") {
+					restored = true
+				}
+				if slices.Contains(call, "inject-codex") && !restored {
+					t.Fatal("credentials injected before restored companion probe")
+				}
 			}
 		})
 	}

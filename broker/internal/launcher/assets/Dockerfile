@@ -30,7 +30,8 @@ COPY claude.json /opt/agent-pm/templates/.claude.json
 RUN npm install --global --ignore-scripts --prefix /opt/agent-pm/clients @openai/codex@0.163.0 \
     && python3 -I /opt/agent-pm/lib/opencode-install.py "$(dpkg --print-architecture)" /opt/agent-pm/clients \
     && PATH=/opt/agent-pm/clients/bin:/home/agent/.npm-global/bin:/usr/local/bin:/usr/bin:/bin python3 -I /opt/agent-pm/lib/plugin-install.py /opt/agent-pm/plugin-sources.json /opt/agent-pm \
-    && mkdir -p /opt/agent-pm/bin /opt/agent-pm/runtime
+    && mkdir -p /opt/agent-pm/bin /opt/agent-pm/runtime \
+    && python3 -I /opt/agent-pm/lib/codex-update.py probe /opt/agent-pm/clients/bin/codex 0.163.0
 COPY codex /opt/agent-pm/bin/codex
 # python3 on the agent's PATH is this venv's, importing agent-pm; system site keeps pip --user working.
 RUN python3 -m venv --system-site-packages /opt/agent-pm/venv && mkdir -p /opt/agent-pm/bin \

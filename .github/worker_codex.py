@@ -15,6 +15,72 @@ from pathlib import Path
 DOCKERFILE = Path(__file__).resolve().parents[1] / "broker/internal/launcher/assets/Dockerfile"
 PYTHON = "/opt/agent-pm/venv/bin/python"
 BOOTSTRAP = "/opt/agent-pm/lib/bootstrap.py"
+TOOL_PROBE = r"""
+import json, os, subprocess, tempfile, threading, uuid
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+with tempfile.TemporaryDirectory(prefix='codex-tools-') as temporary:
+    work = Path(temporary)
+    marker = uuid.uuid4().hex
+    (work / 'input.txt').write_text(marker)
+    observed = []
+    class Provider(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            observed.append(body)
+            if len(observed) == 1:
+                item = {'type': 'custom_tool_call', 'call_id': 'tool-1', 'name': 'exec',
+                        'input': 'text(await tools.exec_command({cmd:"cat input.txt",login:false}));'}
+            else:
+                item = {'type': 'message', 'role': 'assistant', 'id': 'msg-1',
+                        'content': [{'type': 'output_text', 'text': 'done'}]}
+            events = [
+                {'type': 'response.created', 'response': {'id': 'resp-' + str(len(observed))}},
+                {'type': 'response.output_item.done', 'item': item},
+                {'type': 'response.completed', 'response': {'id': 'resp-' + str(len(observed)),
+                    'usage': {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}}},
+            ]
+            data = ''.join('event: ' + event['type'] + '\ndata: ' + json.dumps(event) + '\n\n'
+                           for event in events).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+    server = HTTPServer(('127.0.0.1', 0), Provider)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        config = [
+            'model_provider="fixture"',
+            'model_providers.fixture={name="Fixture",base_url="http://127.0.0.1:'
+                + str(server.server_port) + '/v1",wire_api="responses",requires_openai_auth=false}',
+            'features.code_mode=true', 'features.code_mode_only=true',
+            'features.code_mode_host={enabled=true,disable_in_process_fallback=true}',
+            'features.code_mode_host_grpc=false',
+        ]
+        command = ['codex', '--no-daemon', '--dangerously-bypass-approvals-and-sandbox']
+        for value in config:
+            command.extend(['-c', value])
+        command.extend(['exec', '--skip-git-repo-check', '--json', '-m', 'gpt-5.4',
+                        'Read input.txt using the command tool.'])
+        env = {'HOME': temporary, 'CODEX_HOME': str(work / 'home'),
+               'PATH': '/opt/agent-pm/bin:/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8'}
+        result = subprocess.run(command, cwd=work, env=env, capture_output=True, timeout=60)
+        assert result.returncode == 0, result.stderr.decode(errors='replace')[-2000:]
+        assert len(observed) == 2, 'expected tool call and follow-up'
+        outputs = [item for item in observed[1]['input'] if item.get('type') == 'custom_tool_call_output']
+        assert marker in json.dumps(outputs), 'command did not read the fixture'
+        assert b'failed to spawn code-mode host' not in result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+print('Offline Codex code-mode command turn: PASS')
+"""
 SKILLS_PROBE = """
 import json, os, stat, subprocess
 from pathlib import Path
@@ -354,6 +420,30 @@ def docker(*args, data=None):
     return result.stdout
 
 
+def latest_runtime(directory, architecture):
+    metadata = json.loads(
+        subprocess.check_output(["npm", "view", "@openai/codex@latest", "--json"], timeout=60)
+    )
+    version = metadata["version"]
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError("latest Codex must be stable")
+    platform = "@openai/codex-linux-" + {"amd64": "x64", "arm64": "arm64"}[architecture]
+    dependency = metadata["optionalDependencies"][platform]
+    package = (
+        dependency.removeprefix("npm:")
+        if dependency.startswith("npm:")
+        else platform + "@" + dependency
+    )
+    [packed] = json.loads(
+        subprocess.check_output(
+            ["npm", "pack", "--json", "--ignore-scripts", "--pack-destination", directory, package],
+            cwd=directory,
+            timeout=90,
+        )
+    )
+    return version, Path(directory, packed["filename"]).read_bytes()
+
+
 def main(image):
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("CI") != "true":
         sys.exit("worker_codex.py runs only in GitHub CI")
@@ -370,6 +460,8 @@ def main(image):
         sessions = home / "sessions"
         sessions.mkdir(parents=True)
         sessions.chmod(0o777)
+        architecture = json.loads(docker("image", "inspect", image))[0]["Architecture"]
+        latest, bundle = latest_runtime(temporary, architecture)
         for _ in range(2):
             name = "agent-pm-codex-ci-" + uuid.uuid4().hex
             try:
@@ -409,18 +501,23 @@ def main(image):
                     *inspected["HostConfig"]["Tmpfs"]
                 }
                 docker("exec", name, PYTHON, "-I", BOOTSTRAP, "codex", str(home), "/workspace")
-                stage = """
-import runpy
-from pathlib import Path
-files = list(Path('/opt/agent-pm/clients').glob('**/vendor/*/bin/codex'))
-assert len(files) == 1
-with files[0].open('rb') as source:
-    runpy.run_path('/opt/agent-pm/lib/codex-update.py')['update']('stage', source)
-"""
-                docker("exec", "--user", "root", name, PYTHON, "-I", "-c", stage)
+                docker(
+                    "exec",
+                    "-i",
+                    "--user",
+                    "root",
+                    name,
+                    PYTHON,
+                    "-I",
+                    "/opt/agent-pm/lib/codex-update.py",
+                    "stage",
+                    data=bundle,
+                )
                 assert (
-                    docker("exec", name, "/opt/agent-pm/runtime/codex.next", "--version").strip()
-                    == version
+                    docker(
+                        "exec", name, "/opt/agent-pm/runtime/codex.next/bin/codex", "--version"
+                    ).strip()
+                    == f"codex-cli {latest}".encode()
                 )
                 for action in ("publish", "reset"):
                     docker(
@@ -433,7 +530,25 @@ with files[0].open('rb') as source:
                         "/opt/agent-pm/lib/codex-update.py",
                         action,
                     )
-                    assert docker("exec", name, "codex", "--version").strip() == version
+                    actual = latest if action == "publish" else pinned
+                    assert (
+                        docker("exec", name, "codex", "--version").strip()
+                        == f"codex-cli {actual}".encode()
+                    )
+                    docker(
+                        "exec",
+                        name,
+                        PYTHON,
+                        "-I",
+                        "/opt/agent-pm/lib/codex-update.py",
+                        "probe",
+                        "/opt/agent-pm/bin/codex",
+                        actual,
+                    )
+                    assert (
+                        docker("exec", name, PYTHON, "-I", "-c", TOOL_PROBE).strip()
+                        == b"Offline Codex code-mode command turn: PASS"
+                    )
                 docker("exec", name, PYTHON, "-I", "-c", SKILLS_PROBE)
                 document, replacement = synthetic_credentials()
                 near, _ = synthetic_credentials(lifetime=120)

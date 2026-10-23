@@ -1,5 +1,5 @@
 #!/bin/sh
-if [ -x /opt/agent-pm/runtime/codex ]; then
-    exec /opt/agent-pm/runtime/codex "$@"
+if [ -x /opt/agent-pm/runtime/codex/bin/codex ]; then
+    exec /opt/agent-pm/runtime/codex/bin/codex "$@"
 fi
 exec /opt/agent-pm/clients/bin/codex "$@"
