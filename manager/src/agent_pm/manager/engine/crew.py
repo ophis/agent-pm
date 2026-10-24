@@ -577,7 +577,9 @@ class Crew:
         self.roster.check_lease()
         entries = self.roster.entries()
         if name not in entries:
-            raise ValueError(f"{name}: not in roster")
+            raise ValueError(
+                f"{name}: not in roster; a closed issue run: agent-pm-crew reopen {name}"
+            )
         entry = entries[name]
         if input is not None and entry.state != State.WAITING:
             raise ValueError(f"{name}: --input requires waiting (state {entry.state})")

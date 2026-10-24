@@ -581,6 +581,8 @@ agent-pm-crew status --help for individual status queries.
 their Record; gone entries run their saved resume command. An entry already
 resuming may print nothing. --input requires exactly one waiting entry;
 without it, waiting entries are refused. Issue answers belong on the board.
+A closed entry is no longer in the roster: a closed issue run's conversation
+comes back with agent-pm-crew reopen --help.
 
 Examples:
   With helper gone and its saved conversation available:

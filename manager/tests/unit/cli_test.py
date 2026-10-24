@@ -173,6 +173,9 @@ class CliTest(CliCase):
                     self.assertEqual(result, 2, stderr)
                     self.assertEqual(stdout, "")
                     self.assertIn("not in roster", stderr)
+                    self.assertEqual(
+                        "agent-pm-crew reopen missing" in stderr, command == "resume", stderr
+                    )
                     self.assertFalse(os.path.exists(self.directory))
         run.assert_not_called()
 
