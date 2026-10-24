@@ -151,7 +151,8 @@ python3 .github/ci_scope.py --event pull_request --paths session/src/agent_pm/se
 `Worker image` (`.github/workflows/worker-image.yml`, its own README badge) runs the real
 `agent-pm-broker build` on Ubuntu, with the broker's Docker Desktop paths linked to the
 runner's Docker, then checks the image's labels, that `docker history` holds no `sk-ant`,
-and that a container runs as non-root without `sudo`, prints every client version, has
+that the image holds only agent-pm's `@openai/codex` package (logging the image size), and that a
+container runs as non-root without `sudo`, prints every client version, has
 `/opt/agent-pm/bin/with-secrets`, and runs `/opt/agent-pm/team/tools/repo.py` with the image's
 `python3`. Every run on `main` builds: a push changing an image
 input (the workflow's `push.paths`), the weekly schedule, or a manual dispatch. Every PR

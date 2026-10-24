@@ -16,6 +16,7 @@ DOCKERFILE = Path(__file__).resolve().parents[1] / "broker/internal/launcher/ass
 PYTHON = "/opt/agent-pm/venv/bin/python"
 BOOTSTRAP = "/opt/agent-pm/lib/bootstrap.py"
 PROBES = Path(__file__).with_suffix("")
+INSTALLED = b"/opt/agent-pm/clients/lib/node_modules/@openai/codex"
 
 
 def synthetic_credentials(lifetime=540):
@@ -77,6 +78,28 @@ def probe(name, program, *args, user="agent"):
     )
 
 
+def single_installation(image):
+    found = docker(
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--user",
+        "root",
+        image,
+        "find",
+        "/",
+        "-xdev",
+        "-type",
+        "d",
+        "-path",
+        "*/node_modules/@openai/codex",
+        "-prune",
+    ).split()
+    if found != [INSTALLED]:
+        raise RuntimeError(f"synthetic Codex check: @openai/codex packages {found}")
+
+
 def latest_runtime(directory, architecture):
     metadata = json.loads(
         subprocess.check_output(["npm", "view", "@openai/codex@latest", "--json"], timeout=60)
@@ -108,7 +131,10 @@ def main(image):
         sys.exit("expected a broker-built worker image tag")
     [pinned] = re.findall(r"@openai/codex@(\S+)", DOCKERFILE.read_text(encoding="utf-8"))
     version = f"codex-cli {pinned}".encode()
-    labels = json.loads(docker("image", "inspect", image))[0]["Config"]["Labels"]
+    inspected = json.loads(docker("image", "inspect", image))[0]
+    print(f"Worker image size: {inspected['Size']} bytes")
+    single_installation(image)
+    labels = inspected["Config"]["Labels"]
     owner = f",mode=0700,uid={labels['agent-pm.agent-uid']},gid={labels['agent-pm.agent-gid']}"
     with tempfile.TemporaryDirectory(
         dir=os.environ["RUNNER_TEMP"], prefix="codex-state-"
@@ -117,7 +143,7 @@ def main(image):
         sessions = home / "sessions"
         sessions.mkdir(parents=True)
         sessions.chmod(0o777)
-        architecture = json.loads(docker("image", "inspect", image))[0]["Architecture"]
+        architecture = inspected["Architecture"]
         latest, bundle = latest_runtime(temporary, architecture)
         archive = Path(temporary, "runtime.tgz")
         archive.write_bytes(bundle)
