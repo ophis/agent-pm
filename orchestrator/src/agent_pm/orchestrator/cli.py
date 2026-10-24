@@ -71,6 +71,8 @@ def _query_help(command):
         ),
         "resume": (
             "Live or completed runs retain their identity; interrupted runs restart.\n"
+            "A completed run starts nothing and says so on stderr; to continue its\n"
+            "conversation: agent-pm-crew reopen --help.\n"
             "A usage gate may block restart; wait for its reset before retrying.\n"
             "--input is rejected: put pipeline answers on the issue board, then resume.\n"
             "Run outside an agent session. AGENT_PM_SID, if supplied, must match\n"
@@ -246,7 +248,8 @@ def main(argv=None):
         return issue, view
 
     def resume(view):
-        if not view.delegate.alive() and view.delegate.outcome() is None:
+        alive, outcome = view.delegate.alive(), view.delegate.outcome()
+        if not alive and outcome is None:
             entries = runs.parse_log(cfg.runs_log)
             entry = runs.latest(entries)[view.issue]
             gate = Gate(
@@ -262,7 +265,15 @@ def main(argv=None):
                 key=(view.delegate_kind, runs.client_of(entries, view.sid)),
             ):
                 raise RuntimeError("resume blocked by usage gate")
-        return view.resume().to_line()
+        record = view.resume().to_line()
+        if not alive and outcome is not None:
+            print(
+                f"agent-pm-orchestrator: {view.issue}: run ended ({outcome.status}); nothing"
+                f" resumed; its conversation: agent-pm-crew reopen {view.issue}"
+                " (docs/sessions.md › Recall a closed run)",
+                file=sys.stderr,
+            )
+        return record
 
     def attach_command(view):
         command = view.delegate.attach_command()

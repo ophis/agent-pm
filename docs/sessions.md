@@ -43,6 +43,33 @@ Text sent to a Codex or Claude tui session mid-turn joins that turn. Codex takes
 
 A Codex or Claude turn that fails ends a role run's attempt at once. A usage limit stays a usage limit.
 
+## Recall a closed run
+
+`agent-pm-crew close <ID>` ends a board run's sessions and drops its roster entry; its conversation stays. To continue it:
+
+```sh
+agent-pm-crew reopen [--work-dir <work_dir>] <ID> [--display D]
+```
+
+It reads the run record, `<work_dir>/work/<ID>/run/delegate.json` (`--work-dir` only when the board's `work_dir` is not `~/.agent-pm`), and resumes its session id as worker `<agent name>` on the run's Host, client, cwd and Claude account: a Docker run comes back in a new container with its client history and [workspace volume](docker-host.md#workspace-volumes). The worker is tracked like any other; `agent-pm-crew close <agent name>` ends it. It brings back the conversation, not the run: no harness, outcome or write-back, and the board is untouched. A conversation known only by its session id: `agent-pm-crew worker <name> --resume <sid> --client <client> --cwd <cwd> [--host <host>]`.
+
+These do not recall it:
+
+- `agent-pm-crew resume <ID>` resumes roster entries only, and `close` removed it: `not in roster; a closed issue run: agent-pm-crew reopen --manager=<manager> <ID>`.
+- `agent-pm-orchestrator resume <ID>` continues an interrupted run only; a run with an outcome prints its Record, starts nothing and says so on stderr.
+- The run comment's `agent-pm-session client-resume …` runs the client on this machine, outside agent-pm; a Docker run's history is not there.
+
+`reopen` fails when:
+
+- the issue finished and prune cleaned it: prune deletes the run's agent files, its cwd among them, at once ([State cleanup](board.md#state-cleanup)), and the run record 7 days later;
+- `work/<ID>/run/delegate.json` is gone (pruned, or deleted by hand): `no run record` (exit 1);
+- the run, or a session holding its session id, is still alive: exit 2; close it first;
+- its client history is gone: a Docker run's is in `~/.agent-pm/docker-state/<agent name>/` (`no native history to resume`). A removed workspace volume comes back empty.
+
+`reopen` brings back the issue's latest run; an earlier run's conversation: by its session id, above.
+
+To check a recall, from the commander's `agent-pm-crew hold` shell (elsewhere add `--manager <manager>` to each `agent-pm-crew` command): close a finished dummy-tester run with `agent-pm-crew close <ID>`, run `agent-pm-crew reopen <ID>`, then `agent-pm-session ls` shows `<agent name>` with the run's sid, and `agent-pm-session send <agent name> 'What was your input?'` gets an answer from the earlier conversation (`agent-pm-session read <agent name>`).
+
 ## Client policy
 
 Role runs' client flags are `[policy.<client>]` in `delegate/src/agent_pm/delegate/config.toml` (`[policy.claude]`, `[policy.codex]`; none packaged for OpenCode, so none unless a local `[delegate.policy.opencode]` sets them), after the session's `[clients.<client>] flags` and permission mode. Their system-prompt flag (`--append-system-prompt`, Codex's `developer_instructions`) tells a role run its final reply is the outcome block alone; OpenCode has no such flag, its config being the session's. A local list replaces the default whole: copy that flag into it, and the MCP one.

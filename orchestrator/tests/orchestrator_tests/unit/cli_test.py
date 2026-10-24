@@ -585,7 +585,12 @@ class Queries(RunCase):
             if state == "interrupted":
                 FakeDelegate.end(record.workdir)
             result, output, errors = _call(["resume", "TASK-1"])
-            self.assertEqual((result, errors), (0, ""))
+            ended = (
+                "agent-pm-orchestrator: TASK-1: run ended (done); nothing resumed; its"
+                " conversation: agent-pm-crew reopen TASK-1 (docs/sessions.md › Recall a closed"
+                " run)\n"
+            )
+            self.assertEqual((result, errors), (0, ended if state == "completed" else ""))
             self.assertEqual(Record.parse(output), record)
             self.assertEqual(
                 FakeDelegate.starts(record.workdir),

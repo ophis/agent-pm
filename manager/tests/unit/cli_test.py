@@ -173,6 +173,11 @@ class CliTest(CliCase):
                     self.assertEqual(result, 2, stderr)
                     self.assertEqual(stdout, "")
                     self.assertIn("not in roster", stderr)
+                    self.assertEqual(
+                        "agent-pm-crew reopen --manager=mgr missing" in stderr,
+                        command == "resume",
+                        stderr,
+                    )
                     self.assertFalse(os.path.exists(self.directory))
         run.assert_not_called()
 
@@ -480,6 +485,29 @@ class Reopen(CliCase):
                 self.assertIn(message, stderr)
                 self.assertEqual((self.calls, self.roster.entries()), ([], {}))
                 shutil.rmtree(Path(self.agent_pm, "work"))
+
+    def test_a_closed_issue_run_reopens_on_its_own_sid(self):
+        self.record()
+        self.roster.begin(Spec("TASK-9", ("start",)), sid=self.sid)
+        self.roster.commit("TASK-9", self.fake_record("TASK-9", sid=self.sid))
+        closed = []
+
+        def close(argv, **kwargs):
+            closed.append((argv[-1], *(Record.parse(line).sid for line in kwargs["input"].split())))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=close):
+            self.assertEqual(self.invoke("close", "--manager", "mgr", "TASK-9"), (0, "", ""))
+        self.assertEqual((closed, self.roster.entries()), ([("close", self.sid)], {}))
+        result, _, stderr = self.invoke("resume", "--manager", "mgr", "TASK-9")
+        self.assertEqual(result, 2)
+        self.assertIn("agent-pm-crew reopen --manager=mgr TASK-9", stderr)
+        result, stdout, stderr = self.reopen("--display", "none")
+        self.assertEqual(result, 0, stderr)
+        command = self.calls[0][0]
+        self.assertEqual(command[command.index("--resume") :][:2], ("--resume", self.sid))
+        entry = self.roster.entries()["researcher-0f8fad5b"]
+        self.assertEqual((Record.parse(stdout).sid, entry.sid), (self.sid, self.sid))
 
 
 class ResumeInput(CliCase):

@@ -83,7 +83,7 @@ class Extension(ConfigFile, Case):
             + '[delegates.new]\nimplementation = "external_delegate:NewDefault"\n'
         )
 
-    def child(self, argv, *, stdin=""):
+    def child(self, argv, *, stdin="", stderr=""):
         result = subprocess.run(
             argv,
             input=stdin,
@@ -95,7 +95,7 @@ class Extension(ConfigFile, Case):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stderr, stderr)
         return result.stdout
 
     def start(self, issue):
@@ -110,9 +110,13 @@ class Extension(ConfigFile, Case):
         output = self.child([*CLI, "resume", "TASK-1"])
         self.assertEqual(Record.parse(output), record)
         self.assertEqual(fake_delegate.FakeDelegate.starts(record.workdir), 1)
-        for transition, starts in (("finish", 1), ("end", 2)):
+        ended = (
+            "agent-pm-orchestrator: TASK-1: run ended (done); nothing resumed; its conversation:"
+            " agent-pm-crew reopen TASK-1 (docs/sessions.md › Recall a closed run)\n"
+        )
+        for transition, starts, stderr in (("finish", 1, ended), ("end", 2, "")):
             getattr(fake_delegate.FakeDelegate, transition)(record.workdir)
-            output = self.child([*CLI, "resume", "TASK-1"])
+            output = self.child([*CLI, "resume", "TASK-1"], stderr=stderr)
             self.assertEqual(Record.parse(output), record)
             self.assertEqual(fake_delegate.FakeDelegate.starts(record.workdir), starts)
 
