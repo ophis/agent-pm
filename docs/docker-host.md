@@ -35,7 +35,9 @@ instead builds and ad-hoc signs it locally with the hardened runtime (needs Go, 
 command line tools).
 
 To upgrade, rerun it (your Dockerfile is never overwritten), then [log in](#log-in) again. Claude Code upgrades with
-the image. The image pins `gh` and OpenCode; rebuild an image whose client is below the broker's minimum version.
+the image. The image pins `gh`, Codex and OpenCode; rebuild an image whose client is below the broker's minimum version.
+A worker runs only that Codex, `/opt/agent-pm/bin/codex`, first on `PATH`: a Codex your Dockerfile installs is never run,
+so drop it to shrink the image (a Dockerfile seeded before this change has `@openai/codex` in its `npm install -g` line).
 
 ## Log in
 

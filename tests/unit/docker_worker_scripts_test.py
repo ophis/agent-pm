@@ -495,6 +495,41 @@ class CodexCIGuard(Case):
                 main(image)
             run.assert_not_called()
 
+    def test_image_must_hold_only_the_pinned_codex_package(self):
+        once = runpy.run_path(str(Path(REPO, ".github/worker_codex.py")))["single_installation"]
+        pinned = b"/opt/agent-pm/clients/lib/node_modules/@openai/codex\n"
+        for found, good in (
+            (pinned, True),
+            (pinned + b"/home/agent/.npm-global/lib/node_modules/@openai/codex\n", False),
+            (b"", False),
+        ):
+            result = SimpleNamespace(returncode=0, stdout=found, stderr=b"")
+            with (
+                self.subTest(found=found),
+                mock.patch("subprocess.run", return_value=result) as run,
+            ):
+                if good:
+                    once("agent-pm-worker:" + "a" * 64)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "@openai/codex packages"):
+                        once("agent-pm-worker:" + "a" * 64)
+            command = run.call_args.args[0]
+            self.assertEqual(command[:2], ["docker", "run"])
+            self.assertEqual(command[command.index("--user") + 1], "root")
+            self.assertEqual(
+                command[-8:],
+                [
+                    "find",
+                    "/",
+                    "-xdev",
+                    "-type",
+                    "d",
+                    "-path",
+                    "*/node_modules/@openai/codex",
+                    "-prune",
+                ],
+            )
+
 
 class CodexCIReload(Case):
     def setUp(self):
@@ -675,6 +710,7 @@ class CodexCIReload(Case):
                     [
                         {
                             "Architecture": "amd64",
+                            "Size": 4620000000,
                             "Config": {
                                 "Labels": {
                                     "agent-pm.agent-uid": "1000",
@@ -684,6 +720,8 @@ class CodexCIReload(Case):
                         }
                     ]
                 ).encode()
+            if args[0] == "run" and "find" in args:
+                return b"/opt/agent-pm/clients/lib/node_modules/@openai/codex\n"
             if args[0] == "run":
                 active["home"] = Path(
                     next(
@@ -737,8 +775,9 @@ class CodexCIReload(Case):
             mock.patch("builtins.print"),
         ):
             main("agent-pm-worker:" + "a" * 64)
-        starts = [args for args, _ in calls if args[0] == "run"]
+        starts = [args for args, _ in calls if args[0] == "run" and "--detach" in args]
         self.assertEqual(len(starts), 2)
+        self.assertEqual(len([args for args, _ in calls if "find" in args]), 1)
         self.assertTrue(all(args[args.index("--network") + 1] == "none" for args in starts))
         injected = [(args, data) for args, data in calls if "codex-auth" in args]
         self.assertEqual(len(injected), 2)
@@ -1200,10 +1239,11 @@ class DefaultDockerfile(Case):
             "rm -rf /etc/sudoers.d",
             "USER agent",
             "NPM_CONFIG_PREFIX=/home/agent/.npm-global",
-            "npm install -g @anthropic-ai/claude-code @openai/codex",
+            "npm install -g @anthropic-ai/claude-code\n",
         ):
             self.assertIn(needle, text)
         self.assertNotIn("SHASUMS256", text)
+        self.assertNotIn("@openai/codex", text)
 
 
 def tarball(files):
