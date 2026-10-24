@@ -5,6 +5,7 @@ test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume.
 """
 
 import json
+import os
 
 from agent_pm.manager import State
 from agent_pm.utils import Record
@@ -101,6 +102,26 @@ class RoleTest(RoleCase):
         self.until(lambda: self.gone(harness, tui), f"{harness} and {tui} gone")
         self.assertEqual(list(self.roster()), ["w1"])
         self.assertTrue(self.live("w1"))
+
+    def test_a_closed_run_reopens_on_its_own_sid(self):
+        board = os.path.join(self.root, "board")
+        work = os.path.join(board, "work", "TASK-9")
+        os.makedirs(work)
+        run = ("agent-pm-delegate", "run", "--role", ROLE, "--input", "Hello.", "--workdir", work)
+        argv = (*run, "--out", os.path.join(work, "out.md"), "--mode", "tui", "--detach")
+        record = self.record(self.launch("TASK-9", argv, steps=[START], turns=[[block(DONE)]]))
+        harness, tui = record.sessions
+        self.wait_event(harness, "exited")
+        self.ok(self.crew("close", "TASK-9"))
+        self.until(lambda: self.gone(harness, tui), f"{harness} and {tui} gone")
+        self.assertEqual(self.roster(), {})
+        reopen = ("reopen", "--work-dir", board, "TASK-9", "--display", "none")
+        reopened = self.record(self.crew(*reopen, **self.scene("TASK-9")))
+        self.assertEqual((reopened.name, reopened.sid), (tui, record.sid))
+        self.until(lambda: self.live(tui), f"{tui} back")
+        self.assertTrue(has_pair(logged(self.log("TASK-9"))[-1]["argv"], "--resume", record.sid))
+        entry = self.roster()[tui]
+        self.assertEqual((entry.state, entry.sid, entry.record), (State.LIVE, record.sid, reopened))
 
     def test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone(self):
         record = self.started("r", steps=[block(ASKING)], mode="headless")
