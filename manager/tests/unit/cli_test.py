@@ -174,7 +174,9 @@ class CliTest(CliCase):
                     self.assertEqual(stdout, "")
                     self.assertIn("not in roster", stderr)
                     self.assertEqual(
-                        "agent-pm-crew reopen missing" in stderr, command == "resume", stderr
+                        "agent-pm-crew reopen --manager=mgr missing" in stderr,
+                        command == "resume",
+                        stderr,
                     )
                     self.assertFalse(os.path.exists(self.directory))
         run.assert_not_called()
@@ -499,7 +501,7 @@ class Reopen(CliCase):
         self.assertEqual((closed, self.roster.entries()), ([("close", self.sid)], {}))
         result, _, stderr = self.invoke("resume", "--manager", "mgr", "TASK-9")
         self.assertEqual(result, 2)
-        self.assertIn("agent-pm-crew reopen TASK-9", stderr)
+        self.assertIn("agent-pm-crew reopen --manager=mgr TASK-9", stderr)
         result, stdout, stderr = self.reopen("--display", "none")
         self.assertEqual(result, 0, stderr)
         command = self.calls[0][0]

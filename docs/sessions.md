@@ -55,7 +55,7 @@ It reads the run record, `<work_dir>/work/<ID>/run/delegate.json` (`--work-dir` 
 
 These do not recall it:
 
-- `agent-pm-crew resume <ID>` resumes roster entries only, and `close` removed it: `not in roster; a closed issue run: agent-pm-crew reopen <ID>`.
+- `agent-pm-crew resume <ID>` resumes roster entries only, and `close` removed it: `not in roster; a closed issue run: agent-pm-crew reopen --manager=<manager> <ID>`.
 - `agent-pm-orchestrator resume <ID>` continues an interrupted run only; a run with an outcome prints its Record, starts nothing and says so on stderr.
 - The run comment's `agent-pm-session client-resume …` runs the client on this machine, outside agent-pm; a Docker run's history is not there.
 
@@ -68,7 +68,7 @@ These do not recall it:
 
 `reopen` brings back the issue's latest run; an earlier run's conversation: by its session id, above.
 
-To check a recall: close a finished dummy-tester run with `agent-pm-crew close <ID>`, run `agent-pm-crew reopen <ID>`, then `agent-pm-session ls` shows `<agent name>` with the run's sid, and `agent-pm-session send <agent name> 'What was your input?'` gets an answer from the earlier conversation (`agent-pm-session read <agent name>`).
+To check a recall, from the commander's `agent-pm-crew hold` shell (elsewhere add `--manager <manager>` to each `agent-pm-crew` command): close a finished dummy-tester run with `agent-pm-crew close <ID>`, run `agent-pm-crew reopen <ID>`, then `agent-pm-session ls` shows `<agent name>` with the run's sid, and `agent-pm-session send <agent name> 'What was your input?'` gets an answer from the earlier conversation (`agent-pm-session read <agent name>`).
 
 ## Client policy
 
